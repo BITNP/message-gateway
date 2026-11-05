@@ -1,0 +1,15 @@
+# Local configuration and secrets.
+.env
+.env.*
+!.env.example
+
+# NapCat runtime data (configs, plugins, QQ login state).
+/napcat/
+
+# Build output.
+/message-gateway
+/dist/
+
+# Editor and OS files.
+.idea/
+.DS_Store

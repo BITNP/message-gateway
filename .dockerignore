@@ -1,0 +1,10 @@
+.git
+.gitignore
+.idea
+.env
+.env.*
+!.env.example
+napcat/
+tests/
+README.md
+API.md
