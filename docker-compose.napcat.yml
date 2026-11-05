@@ -1,0 +1,33 @@
+name: message-gateway-napcat
+
+# Optional sample NapCat stack. It is not started by docker-compose.yml.
+#
+# Start the gateway first so the external message-gateway network exists:
+#   docker compose up -d
+# Then start this sample:
+#   docker compose -f docker-compose.napcat.yml up -d
+#
+# The sample joins the gateway network with the service name `napcat`, which
+# matches the default NAPCAT_BASE_URL=http://napcat:3001.
+
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:${NAPCAT_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NAPCAT_UID: "${NAPCAT_UID:-1000}"
+      NAPCAT_GID: "${NAPCAT_GID:-1000}"
+      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
+    ports:
+      - "127.0.0.1:${NAPCAT_ONEBOT_PORT:-3001}:3001"
+      - "127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}:6099"
+    volumes:
+      - "${NAPCAT_CONFIG_DIR:-./napcat/config}:/app/napcat/config:z"
+      - "${NAPCAT_QQ_DIR:-./napcat/QQ}:/app/.config/QQ:z"
+    networks:
+      - message-gateway
+
+networks:
+  message-gateway:
+    external: true
+    name: message-gateway

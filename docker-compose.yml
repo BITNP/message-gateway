@@ -1,5 +1,8 @@
 name: message-gateway
 
+# NapCat is external to this stack. Point NAPCAT_BASE_URL at an existing
+# NapCat instance, or use the sample stack in docker-compose.napcat.yml.
+
 services:
   message-gateway:
     image: ghcr.io/bitnp/message-gateway:${MESSAGE_GATEWAY_IMAGE_TAG:-latest}
@@ -22,26 +25,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-
-  # Optional bundled QQ transport. Start it with:
-  #   docker compose --profile bundled-napcat up -d
-  # Without this profile, point NAPCAT_BASE_URL at an existing NapCat instance.
-  napcat:
-    profiles: ["bundled-napcat"]
-    image: mlikiowa/napcat-docker:${NAPCAT_IMAGE_TAG:-latest}
-    restart: unless-stopped
-    environment:
-      NAPCAT_UID: "${NAPCAT_UID:-1000}"
-      NAPCAT_GID: "${NAPCAT_GID:-1000}"
-      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
-    ports:
-      - "127.0.0.1:${NAPCAT_ONEBOT_PORT:-3001}:3001"
-      - "127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}:6099"
-    volumes:
-      - "${NAPCAT_CONFIG_DIR:-./napcat/config}:/app/napcat/config:z"
-      - "${NAPCAT_QQ_DIR:-./napcat/QQ}:/app/.config/QQ:z"
-    networks:
-      - message-gateway
 
 networks:
   # Fixed name so clinic-backend can join it as an external network.

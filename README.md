@@ -12,7 +12,7 @@ that behavior.
 - Configurable gap policy, retry policy, and queue capacity.
 - Friend/group/member directory sync with shared-group delivery for non-friends.
 - Public `GET /healthz` liveness endpoint.
-- Docker Compose stack with an optional bundled NapCat.
+- Docker Compose stack for the gateway, plus an optional sample NapCat stack.
 - No external Go dependencies.
 
 ## Local binary
@@ -40,22 +40,35 @@ See [API.md](API.md) for the full HTTP contract.
 
 ## Docker Compose
 
-The Compose stack runs the gateway and, with the `bundled-napcat` profile,
-NapCat as well.
+The main Compose stack runs only the gateway. NapCat is an external dependency;
+a sample NapCat stack is provided in `docker-compose.napcat.yml`.
 
 ```bash
 cp .env.example .env
 chmod 600 .env
 # Edit .env and set MESSAGE_GATEWAY_API_KEY, for example:
 #   openssl rand -hex 32
-mkdir -p napcat/config napcat/QQ
 
-docker compose --profile bundled-napcat up -d --build
+docker compose up -d --build
 docker compose logs -f message-gateway
 ```
 
 Use `--build` after changing gateway code. Production deployments use a
 prebuilt image and start with `--no-build` instead.
+
+The Compose network is named `message-gateway`, so `clinic-backend` can join it
+as an external network and reach the gateway at `http://message-gateway:8081`.
+
+### NapCat
+
+The gateway connects to the OneBot HTTP endpoint in `NAPCAT_BASE_URL`. Point it
+at an existing NapCat, or start the sample stack after the gateway network
+exists:
+
+```bash
+mkdir -p napcat/config napcat/QQ
+docker compose -f docker-compose.napcat.yml up -d
+```
 
 If NapCat cannot write to its bind mounts because they were created as root,
 give them to the configured UID/GID:
@@ -64,7 +77,7 @@ give them to the configured UID/GID:
 sudo chown -R 1000:1000 napcat
 ```
 
-### NapCat setup
+Then configure NapCat:
 
 1. Open `http://127.0.0.1:6099/webui`. The WebUI token is in
    `napcat/config/webui.json`.
@@ -74,21 +87,16 @@ sudo chown -R 1000:1000 napcat
    `3001`.
 4. If you configure an access token on that server, put the same value in
    `NAPCAT_ACCESS_TOKEN`.
-5. Keep the gateway's `NAPCAT_BASE_URL` at `http://napcat:3001` inside Compose.
+5. Keep `NAPCAT_BASE_URL=http://napcat:3001` when using the sample stack.
 
-To run only the gateway against an existing NapCat, omit the profile and set
-`NAPCAT_BASE_URL` in `.env` to that NapCat's OneBot endpoint:
+To run the gateway against an existing NapCat, set `NAPCAT_BASE_URL` to that
+endpoint and do not start the sample stack.
 
-```bash
-docker compose up -d message-gateway
-```
-
-The Compose network is named `message-gateway`, so `clinic-backend` can join it
-as an external network and reach the gateway at `http://message-gateway:8081`.
-For production, load the gateway image first and start with `--no-build`:
+The sample stack uses the gateway's external `message-gateway` network. Stop it
+separately before removing the gateway network:
 
 ```bash
-docker compose --profile bundled-napcat up -d --no-build
+docker compose -f docker-compose.napcat.yml down
 ```
 
 ## clinic-backend integration
@@ -106,9 +114,10 @@ MESSAGE_GATEWAY_TIMEOUT=5s
 ```
 
 Keep `NAPCAT_BASE_URL` empty in the backend so the legacy in-process manager
-stays disabled. `clinic-backend/scripts/dev.sh` starts this stack with the
-`bundled-napcat` profile and reads `MESSAGE_GATEWAY_API_KEY` from
-`../message-gateway/.env`.
+stays disabled. `clinic-backend/scripts/dev.sh` starts the gateway stack
+automatically and reads `MESSAGE_GATEWAY_API_KEY` from
+`../message-gateway/.env`. It does not start NapCat; run the sample stack
+separately if you need it locally.
 
 ## Configuration
 
@@ -141,13 +150,20 @@ Gap calculation:
 - `length`: `MESSAGE_GAP_LENGTH_BASE + MESSAGE_GAP_PER_RUNE × runeCount + random[0, MESSAGE_GAP_JITTER)`
 - The result is never below `MESSAGE_GAP_MIN`.
 
-### Compose-only variables
+### Gateway Compose variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `MESSAGE_GATEWAY_PORT` | `8081` | Loopback host port for the gateway. |
 | `MESSAGE_GATEWAY_IMAGE_TAG` | `latest` | Gateway image tag. |
-| `NAPCAT_IMAGE_TAG` | `latest` | Bundled NapCat image tag. |
+
+### Sample NapCat variables
+
+Used only by `docker-compose.napcat.yml`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NAPCAT_IMAGE_TAG` | `latest` | NapCat image tag. |
 | `NAPCAT_ONEBOT_PORT` | `3001` | Loopback host port for NapCat OneBot. |
 | `NAPCAT_WEBUI_PORT` | `6099` | Loopback host port for the NapCat WebUI. |
 | `NAPCAT_UID` / `NAPCAT_GID` | `1000` | UID/GID used by the NapCat container. |
@@ -177,7 +193,9 @@ Gap calculation:
   the `Retry-After` interval.
 - **`202` but no message arrives**: check `docker compose logs message-gateway`
   and NapCat's logs. Confirm the OneBot HTTP server is enabled on port `3001`,
-  the access token matches, and the QQ account is logged in.
+  the access token matches, and the QQ account is logged in. If you use the
+  sample stack, inspect it with
+  `docker compose -f docker-compose.napcat.yml logs napcat`.
 - **NapCat cannot write its data**: fix ownership of `napcat/config` and
   `napcat/QQ` to match `NAPCAT_UID` / `NAPCAT_GID`.
 
@@ -191,7 +209,8 @@ internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests
 Dockerfile             multi-stage gateway image
-docker-compose.yml     gateway + optional bundled NapCat
+docker-compose.yml     gateway stack
+docker-compose.napcat.yml  optional sample NapCat stack
 .env.example           documented environment template
 .github/workflows/     GHCR image publishing
 ```
