@@ -6,15 +6,14 @@ queue, gap policy, retry behavior, and NapCat/OneBot transport.
 
 ## Status
 
-Stages 1 and 2 are complete:
+Stages 1–3 are complete:
 
 - the `message` and `napcat` packages are extracted and tested;
 - the service loads configuration, runs the queue and directory worker, and
-  exposes the HTTP API.
+  exposes the HTTP API;
+- Docker and Compose packaging is available.
 
-Docker packaging and deployment documentation are planned for stage 3.
-
-## Quick start
+## Local binary
 
 ```bash
 export MESSAGE_GATEWAY_API_KEY="$(openssl rand -hex 32)"
@@ -35,6 +34,52 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
 ```
 
 See [API.md](API.md) for the full HTTP contract.
+
+## Docker Compose
+
+The Compose stack runs the gateway and, with the `bundled-napcat` profile,
+NapCat as well.
+
+```bash
+cp .env.example .env
+chmod 600 .env
+# Edit .env and set MESSAGE_GATEWAY_API_KEY, for example:
+#   openssl rand -hex 32
+mkdir -p napcat/config napcat/QQ
+
+docker compose --profile bundled-napcat up -d --build
+docker compose logs -f message-gateway
+```
+
+Use `--build` after changing gateway code. Production deployments use a
+prebuilt image and start with `--no-build` instead.
+
+If NapCat cannot write to its bind mounts because they were created as root,
+give them to the configured UID/GID:
+
+```bash
+sudo chown -R 1000:1000 napcat
+```
+
+The gateway API is at `http://127.0.0.1:8081`. NapCat's WebUI is at
+`http://127.0.0.1:6099/webui`; scan the QR code once. The WebUI token is in
+`napcat/config/webui.json`. Later starts reuse the saved session; set
+`NAPCAT_QUICK_ACCOUNT` to log in automatically.
+
+To run only the gateway against an existing NapCat, omit the profile and set
+`NAPCAT_BASE_URL` in `.env` to that NapCat's OneBot endpoint:
+
+```bash
+docker compose up -d message-gateway
+```
+
+The Compose network is named `message-gateway`, so `clinic-backend` can join it
+as an external network and reach the gateway at `http://message-gateway:8081`.
+For production, load the gateway image first and start with `--no-build`:
+
+```bash
+docker compose --profile bundled-napcat up -d --no-build
+```
 
 ## Configuration
 
@@ -67,6 +112,20 @@ Gap calculation:
 - `length`: `MESSAGE_GAP_LENGTH_BASE + MESSAGE_GAP_PER_RUNE × runeCount + random[0, MESSAGE_GAP_JITTER)`
 - The result is never below `MESSAGE_GAP_MIN`.
 
+### Compose-only variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MESSAGE_GATEWAY_PORT` | `8081` | Loopback host port for the gateway. |
+| `MESSAGE_GATEWAY_IMAGE_TAG` | `latest` | Gateway image tag. |
+| `NAPCAT_IMAGE_TAG` | `latest` | Bundled NapCat image tag. |
+| `NAPCAT_ONEBOT_PORT` | `3001` | Loopback host port for NapCat OneBot. |
+| `NAPCAT_WEBUI_PORT` | `6099` | Loopback host port for the NapCat WebUI. |
+| `NAPCAT_UID` / `NAPCAT_GID` | `1000` | UID/GID used by the NapCat container. |
+| `NAPCAT_QUICK_ACCOUNT` | empty | QQ account to quick-login after the first QR login. |
+| `NAPCAT_CONFIG_DIR` | `./napcat/config` | NapCat config bind mount. |
+| `NAPCAT_QQ_DIR` | `./napcat/QQ` | NapCat login-state bind mount. |
+
 ## Behavior and limitations
 
 - The queue is in-memory. Pending messages are lost when the process stops.
@@ -88,6 +147,10 @@ internal/httpapi/      HTTP transport
 internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests
+Dockerfile             multi-stage gateway image
+docker-compose.yml     gateway + optional bundled NapCat
+.env.example           documented environment template
+.github/workflows/     GHCR image publishing
 ```
 
 ## Development
