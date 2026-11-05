@@ -2,55 +2,30 @@ package httpapi_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"message-gateway/internal/fakenapcat"
 	"message-gateway/internal/httpapi"
 	"message-gateway/internal/message"
 	"message-gateway/internal/napcat"
 )
 
-type napcatSend struct {
-	UserID  int64
-	GroupID int64
-	Message string
-}
-
 func TestGatewaySendReachesNapCat(t *testing.T) {
-	calls := make(chan napcatSend, 1)
+	fake, err := fakenapcat.NewServer(fakenapcat.Config{
+		Friends:        []int64{10001},
+		Groups:         []int64{20001},
+		Members:        []int64{10001},
+		MessageIDStart: 123,
+	})
+	if err != nil {
+		t.Fatalf("fakenapcat.NewServer() error = %v", err)
+	}
 
-	napcatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/send_private_msg" {
-			http.NotFound(w, r)
-			return
-		}
-
-		var body struct {
-			UserID  int64  `json:"user_id"`
-			GroupID int64  `json:"group_id"`
-			Message string `json:"message"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		select {
-		case calls <- napcatSend{UserID: body.UserID, GroupID: body.GroupID, Message: body.Message}:
-		default:
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":  "ok",
-			"retcode": 0,
-			"data":    map[string]any{"message_id": 123},
-		})
-	}))
+	napcatServer := httptest.NewServer(fake.Handler())
 	t.Cleanup(napcatServer.Close)
 
 	client, err := napcat.NewClient(napcat.Config{
@@ -121,15 +96,18 @@ func TestGatewaySendReachesNapCat(t *testing.T) {
 	}
 
 	select {
-	case call := <-calls:
+	case call := <-fake.Sent():
+		if call.Kind != "private" {
+			t.Errorf("kind = %q, want private", call.Kind)
+		}
 		if call.UserID != 10001 {
 			t.Errorf("user id = %d, want 10001", call.UserID)
 		}
 		if call.GroupID != 0 {
 			t.Errorf("group id = %d, want 0", call.GroupID)
 		}
-		if call.Message != "hello from gateway" {
-			t.Errorf("message = %q, want hello from gateway", call.Message)
+		if call.Text != "hello from gateway" {
+			t.Errorf("message = %q, want hello from gateway", call.Text)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for NapCat send")
