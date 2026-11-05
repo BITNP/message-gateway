@@ -29,15 +29,23 @@ All errors share one shape:
 | `400 Bad Request` | Malformed JSON, missing required field, or invalid field value |
 | `401 Unauthorized` | Missing or invalid bearer token |
 | `413 Request Entity Too Large` | Request body exceeds 1 MiB |
-| `429 Too Many Requests` | The sender's queue is full. Retry later. |
+| `429 Too Many Requests` | The sender's queue is full. Retry after `Retry-After: 1`. |
 | `503 Service Unavailable` | The gateway is shutting down |
 | `500 Internal Server Error` | Unexpected server error |
+
+Examples:
+
+```json
+{ "error": "unauthorized" }
+{ "error": "message queue is full" }
+```
 
 ## Endpoints
 
 ### `GET /healthz`
 
-Liveness check. No authentication required.
+Liveness check. No authentication required. This only reports that the gateway
+process is running; it does not check NapCat connectivity or directory state.
 
 **Response `200 OK`**
 
@@ -54,7 +62,7 @@ curl http://127.0.0.1:8081/healthz
 ### `POST /api/v1/messages`
 
 Enqueues an outbound message. The handler validates the request and returns
-immediately; delivery happens asynchronously.
+immediately; delivery happens asynchronously through the sender's FIFO queue.
 
 **Request body**
 
@@ -66,7 +74,7 @@ immediately; delivery happens asynchronously.
 | `text` | string | yes | Message text. Must be non-blank. |
 
 The sender is configured by the gateway (`MESSAGE_SENDER_KEY`, default `qq`),
-so requests do not carry a sender field.
+so requests do not carry a sender field. The request body is limited to 1 MiB.
 
 ```json
 {
@@ -110,6 +118,16 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"group","id":"20002"},"text":"group hello"}'
 ```
+
+## Queue semantics
+
+- Each sender has one bounded FIFO queue (`MESSAGE_QUEUE_SIZE`, default `100`).
+- The queue is in-memory. Pending messages are lost when the gateway restarts.
+- A full queue returns `429 Too Many Requests` with `Retry-After: 1`.
+- Sends are paced by the configured gap policy and retried according to
+  `MESSAGE_MAX_ATTEMPTS` and `MESSAGE_RETRY_BACKOFF`.
+- Requests have no idempotency key. Retrying a request can duplicate a send.
+- The gateway is intended to run as one instance per sender/QQ account.
 
 ## Related configuration
 

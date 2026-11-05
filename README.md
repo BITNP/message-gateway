@@ -1,17 +1,19 @@
 # message-gateway
 
-Standalone outbound message gateway for clinic services. It is extracted from
-`clinic-backend/internal/message` and keeps the same message model, per-sender
-queue, gap policy, retry behavior, and NapCat/OneBot transport.
+Standalone outbound message gateway for clinic services. It owns the NapCat /
+OneBot 11 transport, the per-sender FIFO queue, gap-based pacing, retries, and
+the HTTP API. It was extracted from `clinic-backend/internal/message` and keeps
+that behavior.
 
-## Status
+## Features
 
-Stages 1–3 are complete:
-
-- the `message` and `napcat` packages are extracted and tested;
-- the service loads configuration, runs the queue and directory worker, and
-  exposes the HTTP API;
-- Docker and Compose packaging is available.
+- Bearer-authenticated `POST /api/v1/messages` for private or group QQ messages.
+- Asynchronous delivery through one in-memory FIFO queue per sender.
+- Configurable gap policy, retry policy, and queue capacity.
+- Friend/group/member directory sync with shared-group delivery for non-friends.
+- Public `GET /healthz` liveness endpoint.
+- Docker Compose stack with an optional bundled NapCat.
+- No external Go dependencies.
 
 ## Local binary
 
@@ -22,7 +24,8 @@ export NAPCAT_ACCESS_TOKEN=   # optional, matches NapCat's OneBot token
 go run ./cmd/message-gateway
 ```
 
-The gateway listens on `:8081` by default.
+The gateway listens on `:8081` by default. `NAPCAT_BASE_URL` should point at a
+host-run NapCat for this mode; Compose uses `http://napcat:3001` internally.
 
 ```bash
 curl http://127.0.0.1:8081/healthz
@@ -61,10 +64,17 @@ give them to the configured UID/GID:
 sudo chown -R 1000:1000 napcat
 ```
 
-The gateway API is at `http://127.0.0.1:8081`. NapCat's WebUI is at
-`http://127.0.0.1:6099/webui`; scan the QR code once. The WebUI token is in
-`napcat/config/webui.json`. Later starts reuse the saved session; set
-`NAPCAT_QUICK_ACCOUNT` to log in automatically.
+### NapCat setup
+
+1. Open `http://127.0.0.1:6099/webui`. The WebUI token is in
+   `napcat/config/webui.json`.
+2. Log in to the QQ account by scanning the QR code. On later starts, set
+   `NAPCAT_QUICK_ACCOUNT` in `.env` to reuse the saved session.
+3. In NapCat's network settings, enable the OneBot 11 **HTTP server** on port
+   `3001`.
+4. If you configure an access token on that server, put the same value in
+   `NAPCAT_ACCESS_TOKEN`.
+5. Keep the gateway's `NAPCAT_BASE_URL` at `http://napcat:3001` inside Compose.
 
 To run only the gateway against an existing NapCat, omit the profile and set
 `NAPCAT_BASE_URL` in `.env` to that NapCat's OneBot endpoint:
@@ -81,15 +91,34 @@ For production, load the gateway image first and start with `--no-build`:
 docker compose --profile bundled-napcat up -d --no-build
 ```
 
+## clinic-backend integration
+
+The backend integration contract is HTTP. In the backend `.env`:
+
+```bash
+# Host-run backend development:
+MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
+# Inside Compose:
+# MESSAGE_GATEWAY_URL=http://message-gateway:8081
+
+MESSAGE_GATEWAY_API_KEY=<same key as message-gateway/.env>
+MESSAGE_GATEWAY_TIMEOUT=5s
+```
+
+Keep `NAPCAT_BASE_URL` empty in the backend so the legacy in-process manager
+stays disabled. `clinic-backend/scripts/dev.sh` starts this stack with the
+`bundled-napcat` profile and reads `MESSAGE_GATEWAY_API_KEY` from
+`../message-gateway/.env`.
+
 ## Configuration
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HTTP_ADDR` | `:8081` | HTTP listen address. |
-| `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. |
+| `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
+| `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. Use the same value in the backend. |
 | `MESSAGE_SENDER_KEY` | `qq` | Queue key; also used as `Message.Sender`. |
 | `NAPCAT_BASE_URL` | required | NapCat OneBot 11 HTTP endpoint. |
-| `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for NapCat. |
+| `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for NapCat's OneBot server. |
 | `NAPCAT_TIMEOUT` | `10s` | Per-request NapCat timeout. |
 | `NAPCAT_DIRECTORY_REFRESH` | `30m` | Friend/group directory refresh interval. |
 | `NAPCAT_DIRECTORY_RETRY` | `5s` | Initial directory sync retry interval. |
@@ -135,8 +164,22 @@ Gap calculation:
 - A client retry can duplicate a send because requests have no idempotency key.
 - Platform-specific validation, such as numeric QQ IDs, remains in the NapCat
   sender. Invalid IDs are accepted at enqueue time and fail during delivery.
+- `GET /healthz` is a liveness check. It does not report NapCat connectivity or
+  directory readiness.
 - The gateway does not terminate TLS. Run it on a private network or behind a
   reverse proxy.
+
+## Troubleshooting
+
+- **`401 Unauthorized`**: the backend token does not match
+  `MESSAGE_GATEWAY_API_KEY`.
+- **`429 Too Many Requests`**: the sender queue is full. Clients can retry after
+  the `Retry-After` interval.
+- **`202` but no message arrives**: check `docker compose logs message-gateway`
+  and NapCat's logs. Confirm the OneBot HTTP server is enabled on port `3001`,
+  the access token matches, and the QQ account is logged in.
+- **NapCat cannot write its data**: fix ownership of `napcat/config` and
+  `napcat/QQ` to match `NAPCAT_UID` / `NAPCAT_GID`.
 
 ## Layout
 
@@ -160,3 +203,22 @@ go test ./...
 go test -race ./...
 go vet ./...
 ```
+
+## Images and releases
+
+The Dockerfile builds `ghcr.io/bitnp/message-gateway`. Pushing a `v*` tag runs
+`.github/workflows/docker-publish.yml`, which publishes version, short-SHA, and
+`latest` tags. Pin `MESSAGE_GATEWAY_IMAGE_TAG` in deployments.
+
+For an offline server, pull and package the image on a connected machine, load
+it on the server, then start the stack with `--no-build`.
+
+## Project status
+
+The gateway is ready for outbound text messaging. The next integration step is
+to wire backend business callers to `MESSAGE_GATEWAY_URL` and
+`MESSAGE_GATEWAY_API_KEY`, then remove the frozen `clinic-backend/internal/message`
+copy once nothing depends on it.
+
+Persistent queues, delivery status/cancellation, multi-account routing, inbound
+messages, and new platforms are intentionally out of scope.
