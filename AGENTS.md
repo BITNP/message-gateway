@@ -25,6 +25,8 @@ transport.
 - Keep the deployment contract stable: service name `message-gateway`, network
   name `message-gateway`, container port `8081`, and the documented environment
   variables.
+- Keep `cmd/fake-napcat` and `internal/fakenapcat` dev-only. Do not include them
+  in the production image or add production behavior to them.
 - Run before finishing:
 
 ```bash

@@ -13,6 +13,7 @@ that behavior.
 - Friend/group/member directory sync with shared-group delivery for non-friends.
 - Public `GET /healthz` liveness endpoint.
 - Docker Compose stack for the gateway, plus an optional sample NapCat stack.
+- Dev-only fake NapCat for testing without a QQ account.
 - No external Go dependencies.
 
 ## Local binary
@@ -99,6 +100,79 @@ separately before removing the gateway network:
 docker compose -f docker-compose.napcat.yml down
 ```
 
+## Testing without a real QQ account
+
+`cmd/fake-napcat` is a dev-only OneBot 11 server. It implements the directory
+and send endpoints the gateway uses and records every send attempt. It never
+connects to QQ.
+
+### With Compose
+
+The gateway network must exist first:
+
+```bash
+docker compose up -d
+docker compose -f docker-compose.fake-napcat.yml up -d
+```
+
+Send through the gateway as usual, then inspect or reset the fake:
+
+```bash
+curl http://127.0.0.1:3001/_messages
+curl -X POST http://127.0.0.1:3001/_reset
+```
+
+From `clinic-backend`, `scripts/dev.sh --fake-napcat` starts and stops this fake
+stack automatically.
+
+### With host binaries
+
+```bash
+# Terminal 1
+go run ./cmd/fake-napcat
+
+# Terminal 2
+MESSAGE_GATEWAY_API_KEY=test \
+NAPCAT_BASE_URL=http://127.0.0.1:3001 \
+go run ./cmd/message-gateway
+```
+
+### Fake configuration
+
+| Flag | Environment | Default | Description |
+| --- | --- | --- | --- |
+| `-addr` | `FAKE_NAPCAT_ADDR` | `:3001` | Listen address. |
+| `-token` | `FAKE_NAPCAT_ACCESS_TOKEN` | `NAPCAT_ACCESS_TOKEN` or empty | Require a bearer token. |
+| `-login-id` | `FAKE_NAPCAT_LOGIN_ID` | `10000` | Fake bot QQ id. |
+| `-login-nickname` | `FAKE_NAPCAT_LOGIN_NICKNAME` | `fake-napcat` | Fake bot nickname. |
+| `-friends` | `FAKE_NAPCAT_FRIENDS` | `10001` | Comma-separated friend ids. |
+| `-groups` | `FAKE_NAPCAT_GROUPS` | `20001` | Comma-separated group ids. |
+| `-members` | `FAKE_NAPCAT_MEMBERS` | `10001` | Comma-separated member ids in every group. |
+| `-fail-first` | `FAKE_NAPCAT_FAIL_FIRST` | `0` | Fail the first N send attempts. |
+| `-fail-mode` | `FAKE_NAPCAT_FAIL_MODE` | `transient` | `transient`, `permanent`, or `http500`. |
+| `-delay` | `FAKE_NAPCAT_DELAY` | `0s` | Delay before send responses. |
+| `-message-id-start` | `FAKE_NAPCAT_MESSAGE_ID_START` | `1000` | First fake message id. |
+
+Useful scenarios:
+
+- **Private message:** default friends and members include `10001`.
+- **Group message:** default groups include `20001`.
+- **Non-friend temporary session:** set `FAKE_NAPCAT_FRIENDS=` and keep
+  `FAKE_NAPCAT_MEMBERS=10001`; send to user `10001` with
+  `NAPCAT_GROUP_TEMP_SESSION=true`.
+- **Transient retry:** set `FAKE_NAPCAT_FAIL_FIRST=1` and a short
+  `MESSAGE_RETRY_BACKOFF`.
+- **Permanent drop:** set `FAKE_NAPCAT_FAIL_FIRST=1` and
+  `FAKE_NAPCAT_FAIL_MODE=permanent`.
+
+The Compose fake reads `NAPCAT_ACCESS_TOKEN` so it shares the gateway's token.
+An explicitly empty `FAKE_NAPCAT_FRIENDS`, `FAKE_NAPCAT_GROUPS`, or
+`FAKE_NAPCAT_MEMBERS` clears that list.
+
+The fake and the real sample NapCat both use service name `napcat` and host port
+`3001`. Do not run them at the same time. The fake is in-memory and dev-only; it
+is not part of the production image.
+
 ## clinic-backend integration
 
 The backend integration contract is HTTP. In the backend `.env`:
@@ -117,7 +191,8 @@ Keep `NAPCAT_BASE_URL` empty in the backend so the legacy in-process manager
 stays disabled. `clinic-backend/scripts/dev.sh` starts the gateway stack
 automatically and reads `MESSAGE_GATEWAY_API_KEY` from
 `../message-gateway/.env`. It does not start NapCat; run the sample stack
-separately if you need it locally.
+separately if you need it locally, or use
+`clinic-backend/scripts/dev.sh --fake-napcat` for testing without QQ.
 
 ## Configuration
 
@@ -203,14 +278,18 @@ Used only by `docker-compose.napcat.yml`.
 
 ```text
 cmd/message-gateway/   service entry point
+cmd/fake-napcat/       dev-only fake OneBot server
 internal/config/       environment loading and validation
+internal/fakenapcat/   fake OneBot implementation
 internal/httpapi/      HTTP transport
 internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests
 Dockerfile             multi-stage gateway image
+Dockerfile.fake-napcat dev-only fake image
 docker-compose.yml     gateway stack
 docker-compose.napcat.yml  optional sample NapCat stack
+docker-compose.fake-napcat.yml  optional fake NapCat stack
 .env.example           documented environment template
 .github/workflows/     GHCR image publishing
 ```

@@ -25,9 +25,9 @@ func main() {
 	token := flags.String("token", envString("FAKE_NAPCAT_ACCESS_TOKEN", os.Getenv("NAPCAT_ACCESS_TOKEN")), "optional bearer token")
 	loginID := flags.Int64("login-id", envInt64("FAKE_NAPCAT_LOGIN_ID", fakenapcat.DefaultLoginID), "fake bot QQ id")
 	nickname := flags.String("login-nickname", envString("FAKE_NAPCAT_LOGIN_NICKNAME", fakenapcat.DefaultLoginNickname), "fake bot nickname")
-	friends := flags.String("friends", envString("FAKE_NAPCAT_FRIENDS", "10001"), "comma-separated friend ids")
-	groups := flags.String("groups", envString("FAKE_NAPCAT_GROUPS", "20001"), "comma-separated group ids")
-	members := flags.String("members", envString("FAKE_NAPCAT_MEMBERS", "10001"), "comma-separated member ids in every group")
+	friends := flags.String("friends", envListString("FAKE_NAPCAT_FRIENDS", "10001"), "comma-separated friend ids")
+	groups := flags.String("groups", envListString("FAKE_NAPCAT_GROUPS", "20001"), "comma-separated group ids")
+	members := flags.String("members", envListString("FAKE_NAPCAT_MEMBERS", "10001"), "comma-separated member ids in every group")
 	failFirst := flags.Int("fail-first", envInt("FAKE_NAPCAT_FAIL_FIRST", 0), "fail the first N send attempts")
 	failMode := flags.String("fail-mode", envString("FAKE_NAPCAT_FAIL_MODE", string(fakenapcat.FailModeTransient)), "transient, permanent, or http500")
 	delay := flags.Duration("delay", envDuration("FAKE_NAPCAT_DELAY", 0), "delay before send responses")
@@ -164,6 +164,16 @@ func envString(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// envListString allows an explicitly empty value to clear a list, while an
+// unset variable still uses the default.
+func envListString(key, fallback string) string {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
 
 func envInt(key string, fallback int) int {
