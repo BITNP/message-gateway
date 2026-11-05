@@ -1,0 +1,47 @@
+name: message-gateway-fake-napcat
+
+# Optional dev-only fake NapCat stack. It is not part of docker-compose.yml.
+#
+# Start the gateway first so the external message-gateway network exists:
+#   docker compose up -d
+# Then start the fake:
+#   docker compose -f docker-compose.fake-napcat.yml up -d
+#
+# The service is named `napcat`, so the gateway's default
+# NAPCAT_BASE_URL=http://napcat:3001 works unchanged. Do not run this at the
+# same time as the real sample stack in docker-compose.napcat.yml.
+
+services:
+  napcat:
+    image: message-gateway-fake-napcat:local
+    build:
+      context: .
+      dockerfile: Dockerfile.fake-napcat
+    restart: unless-stopped
+    environment:
+      FAKE_NAPCAT_ADDR: ":3001"
+      FAKE_NAPCAT_ACCESS_TOKEN: "${NAPCAT_ACCESS_TOKEN:-}"
+      FAKE_NAPCAT_LOGIN_ID: "${FAKE_NAPCAT_LOGIN_ID:-10000}"
+      FAKE_NAPCAT_LOGIN_NICKNAME: "${FAKE_NAPCAT_LOGIN_NICKNAME:-fake-napcat}"
+      FAKE_NAPCAT_FRIENDS: "${FAKE_NAPCAT_FRIENDS:-10001}"
+      FAKE_NAPCAT_GROUPS: "${FAKE_NAPCAT_GROUPS:-20001}"
+      FAKE_NAPCAT_MEMBERS: "${FAKE_NAPCAT_MEMBERS:-10001}"
+      FAKE_NAPCAT_FAIL_FIRST: "${FAKE_NAPCAT_FAIL_FIRST:-0}"
+      FAKE_NAPCAT_FAIL_MODE: "${FAKE_NAPCAT_FAIL_MODE:-transient}"
+      FAKE_NAPCAT_DELAY: "${FAKE_NAPCAT_DELAY:-0s}"
+      FAKE_NAPCAT_MESSAGE_ID_START: "${FAKE_NAPCAT_MESSAGE_ID_START:-1000}"
+    ports:
+      - "127.0.0.1:${NAPCAT_ONEBOT_PORT:-3001}:3001"
+    networks:
+      - message-gateway
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+
+networks:
+  message-gateway:
+    external: true
+    name: message-gateway
