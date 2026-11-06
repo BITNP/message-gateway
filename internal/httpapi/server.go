@@ -16,9 +16,14 @@ const (
 	defaultPingInterval   = 30 * time.Second
 )
 
-// Enqueuer accepts a message for asynchronous delivery.
+// Enqueuer accepts a message for asynchronous delivery and reports delivery
+// updates to an observer.
 type Enqueuer interface {
-	Enqueue(ctx context.Context, msg message.Message) (message.DeliveryID, error)
+	EnqueueObserved(
+		ctx context.Context,
+		msg message.Message,
+		observe message.DeliveryObserver,
+	) (message.DeliveryID, error)
 }
 
 // Options configures the gateway HTTP transport.

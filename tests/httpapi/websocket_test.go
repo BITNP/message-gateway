@@ -21,10 +21,11 @@ type readyFrame struct {
 }
 
 type errorFrame struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Code      string `json:"code"`
-	Message   string `json:"message"`
+	Type         string `json:"type"`
+	RequestID    string `json:"request_id"`
+	Code         string `json:"code"`
+	Message      string `json:"message"`
+	RetryAfterMS int64  `json:"retry_after_ms"`
 }
 
 func webSocketEndpoint(srv *httptest.Server) string {
@@ -32,6 +33,15 @@ func webSocketEndpoint(srv *httptest.Server) string {
 }
 
 func newWebSocketServer(t *testing.T, opts httpapi.Options) (*httptest.Server, *httpapi.Server) {
+	t.Helper()
+	return newWebSocketServerWith(t, &fakeEnqueuer{}, opts)
+}
+
+func newWebSocketServerWith(
+	t *testing.T,
+	enqueuer httpapi.Enqueuer,
+	opts httpapi.Options,
+) (*httptest.Server, *httpapi.Server) {
 	t.Helper()
 
 	if opts.SenderKey == "" {
@@ -41,7 +51,7 @@ func newWebSocketServer(t *testing.T, opts httpapi.Options) (*httptest.Server, *
 		opts.APIKey = testAPIKey
 	}
 
-	api := httpapi.New(&fakeEnqueuer{}, opts)
+	api := httpapi.New(enqueuer, opts)
 	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
 	t.Cleanup(api.CloseWebSockets)

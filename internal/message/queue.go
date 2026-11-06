@@ -205,6 +205,7 @@ func (q *senderQueue) run(ctx context.Context, manager *Manager) {
 					State:    DeliveryRetrying,
 					Attempts: item.attempts,
 					Err:      err,
+					RetryIn:  manager.cfg.RetryBackoff,
 				})
 			}
 			continue

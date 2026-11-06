@@ -1,5 +1,7 @@
 package message
 
+import "time"
+
 // DeliveryState reports how far an observed delivery has progressed.
 type DeliveryState string
 
@@ -29,6 +31,9 @@ type DeliveryUpdate struct {
 	Receipt Receipt
 	// Err is the send error when State is DeliveryRetrying or DeliveryFailed.
 	Err error
+	// RetryIn is the delay before the next attempt when State is
+	// DeliveryRetrying.
+	RetryIn time.Duration
 }
 
 // DeliveryObserver receives delivery updates for one enqueued message.
