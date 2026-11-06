@@ -65,7 +65,11 @@ func sendConfig() message.Config {
 	}
 }
 
-func newSendGateway(t *testing.T, cfg message.Config, sender message.Sender) *httptest.Server {
+func newSendGateway(
+	t *testing.T,
+	cfg message.Config,
+	sender message.Sender,
+) (*httptest.Server, *httpapi.Server) {
 	t.Helper()
 
 	mgr, err := message.NewManager(cfg)
@@ -88,7 +92,7 @@ func newSendGateway(t *testing.T, cfg message.Config, sender message.Sender) *ht
 		mgr.Run(ctx)
 	}()
 
-	srv, _ := newWebSocketServerWith(t, mgr, httpapi.Options{SenderKey: "qq"})
+	srv, api := newWebSocketServerWith(t, mgr, httpapi.Options{SenderKey: "qq"})
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -97,7 +101,7 @@ func newSendGateway(t *testing.T, cfg message.Config, sender message.Sender) *ht
 			t.Error("manager did not stop")
 		}
 	})
-	return srv
+	return srv, api
 }
 
 func sendFramePayload(requestID, text string) string {
@@ -113,7 +117,7 @@ func TestWebSocketQueuedBeforeSent(t *testing.T) {
 	sendDone := make(chan struct{})
 	var once sync.Once
 
-	srv := newSendGateway(t, sendConfig(), funcSender{
+	srv, _ := newSendGateway(t, sendConfig(), funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			once.Do(func() { close(sendDone) })
 			return message.Receipt{MessageID: "m-1", SentAt: time.Now()}, nil
@@ -170,7 +174,7 @@ func TestWebSocketAcknowledgesBeforeSending(t *testing.T) {
 	cfg := sendConfig()
 	cfg.SendTimeout = 5 * time.Second
 
-	srv := newSendGateway(t, cfg, funcSender{
+	srv, _ := newSendGateway(t, cfg, funcSender{
 		fn: func(ctx context.Context, _ message.Message) (message.Receipt, error) {
 			once.Do(func() { close(started) })
 			select {
@@ -212,7 +216,7 @@ func TestWebSocketAcknowledgesBeforeSending(t *testing.T) {
 
 func TestWebSocketReportsRetryThenSent(t *testing.T) {
 	var attempts atomic.Int32
-	srv := newSendGateway(t, sendConfig(), funcSender{
+	srv, _ := newSendGateway(t, sendConfig(), funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			if attempts.Add(1) == 1 {
 				return message.Receipt{}, fmt.Errorf("%w: temporary", message.ErrTransient)
@@ -258,7 +262,7 @@ func TestWebSocketReportsRetryThenSent(t *testing.T) {
 }
 
 func TestWebSocketReportsPermanentFailure(t *testing.T) {
-	srv := newSendGateway(t, sendConfig(), funcSender{
+	srv, _ := newSendGateway(t, sendConfig(), funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			return message.Receipt{}, fmt.Errorf("%w: bad target", message.ErrPermanent)
 		},
@@ -293,7 +297,7 @@ func TestWebSocketReportsExhaustedRetries(t *testing.T) {
 	cfg := sendConfig()
 	cfg.MaxAttempts = 2
 
-	srv := newSendGateway(t, cfg, funcSender{
+	srv, _ := newSendGateway(t, cfg, funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			return message.Receipt{}, fmt.Errorf("%w: temporary", message.ErrTransient)
 		},
@@ -453,7 +457,7 @@ func TestWebSocketSendMapsEnqueueErrors(t *testing.T) {
 
 func TestWebSocketPipelinesRequests(t *testing.T) {
 	var sent int64
-	srv := newSendGateway(t, sendConfig(), funcSender{
+	srv, _ := newSendGateway(t, sendConfig(), funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			id := atomic.AddInt64(&sent, 1)
 			return message.Receipt{
@@ -511,7 +515,7 @@ func TestWebSocketPipelinesRequests(t *testing.T) {
 }
 
 func TestWebSocketDeliveriesAreScopedToTheConnection(t *testing.T) {
-	srv := newSendGateway(t, sendConfig(), funcSender{
+	srv, _ := newSendGateway(t, sendConfig(), funcSender{
 		fn: func(context.Context, message.Message) (message.Receipt, error) {
 			return message.Receipt{MessageID: "m-1", SentAt: time.Now()}, nil
 		},
