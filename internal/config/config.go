@@ -16,6 +16,8 @@ const (
 	defaultHTTPAddr  = ":8081"
 	defaultSenderKey = "qq"
 
+	defaultWebSocketMaxConnections = 16
+
 	defaultQueueSize    = 100
 	defaultSendTimeout  = 30 * time.Second
 	defaultMaxAttempts  = 3
@@ -35,12 +37,13 @@ const (
 
 // Config is the validated runtime configuration for the gateway.
 type Config struct {
-	HTTPAddr  string
-	APIKey    string
-	SenderKey string
-	NapCat    napcat.Config
-	Manager   message.Config
-	Gap       message.GapPolicy
+	HTTPAddr                string
+	APIKey                  string
+	SenderKey               string
+	WebSocketMaxConnections int
+	NapCat                  napcat.Config
+	Manager                 message.Config
+	Gap                     message.GapPolicy
 }
 
 // Load reads and validates the gateway environment. The API key and NapCat
@@ -59,6 +62,14 @@ func Load(getenv func(string) string) (Config, error) {
 	senderKey := strings.TrimSpace(getenv("MESSAGE_SENDER_KEY"))
 	if senderKey == "" {
 		senderKey = defaultSenderKey
+	}
+
+	webSocketMaxConnections, err := parsePositiveIntSetting(
+		getenv("MESSAGE_WS_MAX_CONNECTIONS"),
+		defaultWebSocketMaxConnections,
+	)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MESSAGE_WS_MAX_CONNECTIONS: %w", err)
 	}
 
 	baseURL := strings.TrimSpace(getenv("NAPCAT_BASE_URL"))
@@ -151,9 +162,10 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return Config{
-		HTTPAddr:  httpAddr,
-		APIKey:    apiKey,
-		SenderKey: senderKey,
+		HTTPAddr:                httpAddr,
+		APIKey:                  apiKey,
+		SenderKey:               senderKey,
+		WebSocketMaxConnections: webSocketMaxConnections,
 		NapCat: napcat.Config{
 			BaseURL:          baseURL,
 			AccessToken:      strings.TrimSpace(getenv("NAPCAT_ACCESS_TOKEN")),

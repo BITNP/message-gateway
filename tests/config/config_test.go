@@ -36,6 +36,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SenderKey != "qq" {
 		t.Errorf("SenderKey = %q, want qq", cfg.SenderKey)
 	}
+	if cfg.WebSocketMaxConnections != 16 {
+		t.Errorf("WebSocketMaxConnections = %d, want 16", cfg.WebSocketMaxConnections)
+	}
 	if cfg.NapCat.BaseURL != "http://napcat:3001" {
 		t.Errorf("NapCat.BaseURL = %q", cfg.NapCat.BaseURL)
 	}
@@ -82,24 +85,25 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadCustom(t *testing.T) {
 	cfg, err := config.Load(envMap(map[string]string{
-		"HTTP_ADDR":                 " 127.0.0.1:9090 ",
-		"MESSAGE_GATEWAY_API_KEY":   " secret ",
-		"MESSAGE_SENDER_KEY":        " qq-main ",
-		"NAPCAT_BASE_URL":           " http://napcat:3001 ",
-		"NAPCAT_ACCESS_TOKEN":       " token ",
-		"NAPCAT_TIMEOUT":            "2s",
-		"NAPCAT_DIRECTORY_REFRESH":  "10m",
-		"NAPCAT_DIRECTORY_RETRY":    "1s",
-		"NAPCAT_DIRECTORY_TIMEOUT":  "20s",
-		"NAPCAT_GROUP_TEMP_SESSION": "false",
-		"MESSAGE_QUEUE_SIZE":        "5",
-		"MESSAGE_SEND_TIMEOUT":      "4s",
-		"MESSAGE_MAX_ATTEMPTS":      "2",
-		"MESSAGE_RETRY_BACKOFF":     "1s",
-		"MESSAGE_GAP_MODE":          "fixed",
-		"MESSAGE_GAP_FIXED":         "2s",
-		"MESSAGE_GAP_JITTER":        "0s",
-		"MESSAGE_GAP_MIN":           "500ms",
+		"HTTP_ADDR":                  " 127.0.0.1:9090 ",
+		"MESSAGE_GATEWAY_API_KEY":    " secret ",
+		"MESSAGE_SENDER_KEY":         " qq-main ",
+		"MESSAGE_WS_MAX_CONNECTIONS": "4",
+		"NAPCAT_BASE_URL":            " http://napcat:3001 ",
+		"NAPCAT_ACCESS_TOKEN":        " token ",
+		"NAPCAT_TIMEOUT":             "2s",
+		"NAPCAT_DIRECTORY_REFRESH":   "10m",
+		"NAPCAT_DIRECTORY_RETRY":     "1s",
+		"NAPCAT_DIRECTORY_TIMEOUT":   "20s",
+		"NAPCAT_GROUP_TEMP_SESSION":  "false",
+		"MESSAGE_QUEUE_SIZE":         "5",
+		"MESSAGE_SEND_TIMEOUT":       "4s",
+		"MESSAGE_MAX_ATTEMPTS":       "2",
+		"MESSAGE_RETRY_BACKOFF":      "1s",
+		"MESSAGE_GAP_MODE":           "fixed",
+		"MESSAGE_GAP_FIXED":          "2s",
+		"MESSAGE_GAP_JITTER":         "0s",
+		"MESSAGE_GAP_MIN":            "500ms",
 	}))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -113,6 +117,9 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if cfg.SenderKey != "qq-main" {
 		t.Errorf("SenderKey = %q, want qq-main", cfg.SenderKey)
+	}
+	if cfg.WebSocketMaxConnections != 4 {
+		t.Errorf("WebSocketMaxConnections = %d, want 4", cfg.WebSocketMaxConnections)
 	}
 	if cfg.NapCat.BaseURL != "http://napcat:3001" {
 		t.Errorf("BaseURL = %q", cfg.NapCat.BaseURL)
@@ -200,6 +207,7 @@ func TestLoadInvalidValues(t *testing.T) {
 	}{
 		{"queue size", "MESSAGE_QUEUE_SIZE", "0"},
 		{"queue size not a number", "MESSAGE_QUEUE_SIZE", "many"},
+		{"websocket connections", "MESSAGE_WS_MAX_CONNECTIONS", "0"},
 		{"send timeout", "MESSAGE_SEND_TIMEOUT", "0s"},
 		{"max attempts", "MESSAGE_MAX_ATTEMPTS", "0"},
 		{"retry backoff", "MESSAGE_RETRY_BACKOFF", "-1s"},
