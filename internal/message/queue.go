@@ -12,6 +12,7 @@ type delivery struct {
 	id       DeliveryID
 	msg      Message
 	attempts int
+	observe  DeliveryObserver
 }
 
 // senderQueue is a bounded FIFO queue plus pacing state for one sender.
@@ -176,7 +177,7 @@ func (q *senderQueue) run(ctx context.Context, manager *Manager) {
 		}
 
 		sendCtx, cancel := context.WithTimeout(ctx, manager.cfg.SendTimeout)
-		_, err := q.sender.Send(sendCtx, item.msg)
+		receipt, err := q.sender.Send(sendCtx, item.msg)
 		cancel()
 
 		if ctx.Err() != nil {
@@ -186,6 +187,11 @@ func (q *senderQueue) run(ctx context.Context, manager *Manager) {
 		if err != nil {
 			dropped := q.fail(time.Now(), err, manager.cfg.MaxAttempts, manager.cfg.RetryBackoff)
 			if dropped {
+				notifyDelivery(item, DeliveryUpdate{
+					State:    DeliveryFailed,
+					Attempts: item.attempts,
+					Err:      err,
+				})
 				log.Printf(
 					"message: dropped %s sender=%s target=%s attempts=%d: %v",
 					item.id,
@@ -194,10 +200,21 @@ func (q *senderQueue) run(ctx context.Context, manager *Manager) {
 					item.attempts,
 					err,
 				)
+			} else {
+				notifyDelivery(item, DeliveryUpdate{
+					State:    DeliveryRetrying,
+					Attempts: item.attempts,
+					Err:      err,
+				})
 			}
 			continue
 		}
 
 		q.complete(time.Now())
+		notifyDelivery(item, DeliveryUpdate{
+			State:    DeliverySent,
+			Attempts: item.attempts + 1,
+			Receipt:  receipt,
+		})
 	}
 }

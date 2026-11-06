@@ -91,6 +91,17 @@ func (m *Manager) Register(senderKey string, sender Sender, policy GapPolicy) er
 // Enqueue adds msg to the queue for its sender. It never blocks: a full queue
 // returns ErrQueueFull and the caller decides whether to retry or drop.
 func (m *Manager) Enqueue(ctx context.Context, msg Message) (DeliveryID, error) {
+	return m.EnqueueObserved(ctx, msg, nil)
+}
+
+// EnqueueObserved is Enqueue plus a delivery observer that reports the send
+// outcome. A nil observer behaves like Enqueue. The observer runs on the
+// sender's worker goroutine; see DeliveryObserver for its contract.
+func (m *Manager) EnqueueObserved(
+	ctx context.Context,
+	msg Message,
+	observe DeliveryObserver,
+) (DeliveryID, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -111,7 +122,7 @@ func (m *Manager) Enqueue(ctx context.Context, msg Message) (DeliveryID, error) 
 	}
 
 	id := DeliveryID(fmt.Sprintf("%s-%d", msg.Sender, m.seq.Add(1)))
-	delivery := &delivery{id: id, msg: msg}
+	delivery := &delivery{id: id, msg: msg, observe: observe}
 	if err := queue.push(ctx, delivery); err != nil {
 		return "", err
 	}
