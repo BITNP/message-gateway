@@ -2,19 +2,21 @@
 
 Standalone outbound message gateway for clinic services. It owns the NapCat /
 OneBot 11 transport, the per-sender FIFO queue, gap-based pacing, retries, and
-the HTTP API. It was extracted from `clinic-backend/internal/message` and keeps
-that behavior.
+the HTTP and WebSocket APIs. It was extracted from
+`clinic-backend/internal/message` and keeps that behavior.
 
 ## Features
 
 - Bearer-authenticated `POST /api/v1/messages` for private or group QQ messages.
+- Bearer-authenticated `GET /api/v1/ws` that reports `queued`, `retrying`,
+  `sent`, and `failed` for each message, with pipelined requests.
 - Asynchronous delivery through one in-memory FIFO queue per sender.
 - Configurable gap policy, retry policy, and queue capacity.
 - Friend/group/member directory sync with shared-group delivery for non-friends.
 - Public `GET /healthz` liveness endpoint.
 - Docker Compose stack for the gateway, plus an optional sample NapCat stack.
 - Dev-only fake NapCat for testing without a QQ account.
-- No external Go dependencies.
+- One Go dependency (`github.com/coder/websocket`); no cgo.
 
 ## Local binary
 
@@ -35,9 +37,12 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
   -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
+
+websocat -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+  ws://127.0.0.1:8081/api/v1/ws
 ```
 
-See [API.md](API.md) for the full HTTP contract.
+See [API.md](API.md) for the full HTTP and WebSocket contract.
 
 ## Docker Compose
 
@@ -175,7 +180,8 @@ is not part of the production image.
 
 ## clinic-backend integration
 
-The backend integration contract is HTTP. In the backend `.env`:
+The backend integration contract is HTTP; WebSocket is optional and only needed
+by callers that want delivery feedback. In the backend `.env`:
 
 ```bash
 # Host-run backend development:
@@ -201,6 +207,7 @@ separately if you need it locally, or use
 | `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
 | `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. Use the same value in the backend. |
 | `MESSAGE_SENDER_KEY` | `qq` | Queue key; also used as `Message.Sender`. |
+| `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `NAPCAT_BASE_URL` | required | NapCat OneBot 11 HTTP endpoint. |
 | `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for NapCat's OneBot server. |
 | `NAPCAT_TIMEOUT` | `10s` | Per-request NapCat timeout. |
@@ -250,8 +257,11 @@ Used only by `docker-compose.napcat.yml`.
 
 - The queue is in-memory. Pending messages are lost when the process stops.
 - One gateway instance owns one sender/QQ account.
-- `202 Accepted` means the message was queued, not delivered. There is no
-  delivery-status endpoint.
+- Over HTTP, `202 Accepted` means the message was queued, not delivered. Use
+  `GET /api/v1/ws` when the send outcome matters.
+- Over WebSocket, `sent` means NapCat accepted the message; it does not prove
+  the recipient read it. Delivery events belong to the connection that
+  enqueued the message and are not replayed after a reconnect.
 - A client retry can duplicate a send because requests have no idempotency key.
 - Platform-specific validation, such as numeric QQ IDs, remains in the NapCat
   sender. Invalid IDs are accepted at enqueue time and fail during delivery.
@@ -281,7 +291,7 @@ cmd/message-gateway/   service entry point
 cmd/fake-napcat/       dev-only fake OneBot server
 internal/config/       environment loading and validation
 internal/fakenapcat/   fake OneBot implementation
-internal/httpapi/      HTTP transport
+internal/httpapi/      HTTP and WebSocket transport
 internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests
@@ -318,5 +328,5 @@ to wire backend business callers to `MESSAGE_GATEWAY_URL` and
 `MESSAGE_GATEWAY_API_KEY`, then remove the frozen `clinic-backend/internal/message`
 copy once nothing depends on it.
 
-Persistent queues, delivery status/cancellation, multi-account routing, inbound
-messages, and new platforms are intentionally out of scope.
+Persistent queues, cancellation, replay across reconnects, multi-account
+routing, inbound messages, and new platforms are intentionally out of scope.
