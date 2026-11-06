@@ -23,7 +23,11 @@ type fakeEnqueuer struct {
 	err      error
 }
 
-func (f *fakeEnqueuer) Enqueue(_ context.Context, msg message.Message) (message.DeliveryID, error) {
+func (f *fakeEnqueuer) EnqueueObserved(
+	_ context.Context,
+	msg message.Message,
+	_ message.DeliveryObserver,
+) (message.DeliveryID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

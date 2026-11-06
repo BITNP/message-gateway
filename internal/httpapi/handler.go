@@ -47,21 +47,13 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := message.Message{
-		Platform: message.Platform(strings.ToLower(strings.TrimSpace(request.Platform))),
-		Sender:   s.senderKey,
-		Target: message.Target{
-			Kind: message.TargetKind(strings.ToLower(strings.TrimSpace(request.Target.Kind))),
-			ID:   strings.TrimSpace(request.Target.ID),
-		},
-		Text: request.Text,
-	}
+	msg := messageFromRequest(s.senderKey, request.Platform, request.Target, request.Text)
 	if err := msg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	id, err := s.enqueuer.Enqueue(r.Context(), msg)
+	id, err := s.enqueuer.EnqueueObserved(r.Context(), msg, nil)
 	if err != nil {
 		switch {
 		case errors.Is(err, message.ErrInvalidMessage):
@@ -90,4 +82,23 @@ func ensureSingleJSON(decoder *json.Decoder) error {
 		return errors.New("body must contain a single JSON object")
 	}
 	return nil
+}
+
+// messageFromRequest normalizes a transport-level send request into a
+// message. Both HTTP and WebSocket use it so validation cannot drift.
+func messageFromRequest(
+	senderKey string,
+	platform string,
+	target targetRequest,
+	text string,
+) message.Message {
+	return message.Message{
+		Platform: message.Platform(strings.ToLower(strings.TrimSpace(platform))),
+		Sender:   senderKey,
+		Target: message.Target{
+			Kind: message.TargetKind(strings.ToLower(strings.TrimSpace(target.Kind))),
+			ID:   strings.TrimSpace(target.ID),
+		},
+		Text: text,
+	}
 }

@@ -134,6 +134,9 @@ func TestEnqueueObservedReportsRetryThenSent(t *testing.T) {
 	if !errors.Is(retry.Err, message.ErrTransient) {
 		t.Errorf("retry error = %v, want ErrTransient", retry.Err)
 	}
+	if retry.RetryIn != time.Millisecond {
+		t.Errorf("retry delay = %v, want 1ms", retry.RetryIn)
+	}
 
 	sent := waitForUpdate(t, log.ch)
 	if sent.State != message.DeliverySent {
