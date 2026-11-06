@@ -27,7 +27,7 @@ type sendResponse struct {
 	Status string `json:"status"`
 }
 
-func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	defer r.Body.Close()
 

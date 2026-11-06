@@ -49,8 +49,11 @@ func (f *fakeEnqueuer) lastMessage() message.Message {
 	return f.messages[len(f.messages)-1]
 }
 
-func newHandler(enqueuer httpapi.Enqueuer) http.Handler {
-	return httpapi.New(enqueuer, "qq", testAPIKey)
+func newHandler(enqueuer httpapi.Enqueuer) *httpapi.Server {
+	return httpapi.New(enqueuer, httpapi.Options{
+		SenderKey: "qq",
+		APIKey:    testAPIKey,
+	})
 }
 
 func doRequest(

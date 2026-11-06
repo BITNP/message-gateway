@@ -44,8 +44,14 @@ func main() {
 		log.Fatalf("listen on %s: %v", cfg.HTTPAddr, err)
 	}
 
+	api := httpapi.New(manager, httpapi.Options{
+		SenderKey:      cfg.SenderKey,
+		APIKey:         cfg.APIKey,
+		MaxConnections: cfg.WebSocketMaxConnections,
+	})
+
 	server := &http.Server{
-		Handler:           httpapi.New(manager, cfg.SenderKey, cfg.APIKey),
+		Handler:           api,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -90,6 +96,10 @@ func main() {
 			exitCode = 1
 		}
 	}
+
+	// Hijacked WebSocket connections are not tracked by net/http, so close
+	// them explicitly before shutting the server down.
+	api.CloseWebSockets()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	if err := server.Shutdown(shutdownCtx); err != nil {

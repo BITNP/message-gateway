@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func (s *server) requireAuth(next http.Handler) http.Handler {
+func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok || !s.validToken(token) {
@@ -19,7 +19,7 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-func (s *server) validToken(token string) bool {
+func (s *Server) validToken(token string) bool {
 	digest := sha256.Sum256([]byte(token))
 	return subtle.ConstantTimeCompare(digest[:], s.apiKeyHash[:]) == 1
 }

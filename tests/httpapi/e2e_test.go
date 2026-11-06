@@ -74,7 +74,10 @@ func TestGatewaySendReachesNapCat(t *testing.T) {
 		}
 	})
 
-	gateway := httptest.NewServer(httpapi.New(manager, "qq", testAPIKey))
+	gateway := httptest.NewServer(httpapi.New(manager, httpapi.Options{
+		SenderKey: "qq",
+		APIKey:    testAPIKey,
+	}))
 	t.Cleanup(gateway.Close)
 
 	body := `{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello from gateway"}`
