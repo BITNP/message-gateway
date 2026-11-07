@@ -86,6 +86,7 @@ func New(enqueuer Enqueuer, opts Options) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("POST /api/v1/messages", s.requireAuth(http.HandlerFunc(s.handleSend)))
+	mux.Handle("GET /api/v1/messages/{id}", s.requireAuth(http.HandlerFunc(s.handleStatus)))
 	mux.Handle("GET /api/v1/ws", s.requireAuth(http.HandlerFunc(s.handleWebSocket)))
 	s.mux = mux
 	return s

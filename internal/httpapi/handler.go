@@ -53,7 +53,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := s.enqueuer.EnqueueObserved(r.Context(), msg, nil)
+	id, err := s.enqueuer.EnqueueObserved(r.Context(), msg, s.statuses.update)
 	if err != nil {
 		switch {
 		case errors.Is(err, message.ErrInvalidMessage):
@@ -70,10 +70,62 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.statuses.register(id)
 	writeJSON(w, http.StatusAccepted, sendResponse{
 		ID:     string(id),
 		Status: "queued",
 	})
+}
+
+// statusReceiptResponse is the receipt block of a sent delivery.
+type statusReceiptResponse struct {
+	MessageID string `json:"message_id"`
+	SentAt    string `json:"sent_at,omitempty"`
+}
+
+// statusResponse is the body of GET /api/v1/messages/{id}. Fields other than
+// id and status appear only for the states that carry them.
+type statusResponse struct {
+	ID        string                 `json:"id"`
+	Status    string                 `json:"status"`
+	Attempts  int                    `json:"attempts,omitempty"`
+	Reason    string                 `json:"reason,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	RetryInMS int64                  `json:"retry_in_ms,omitempty"`
+	Receipt   *statusReceiptResponse `json:"receipt,omitempty"`
+}
+
+// handleStatus reports the latest known delivery state for one enqueued
+// message. Statuses are process-local: an id answers 404 when it was never
+// enqueued in this process, was evicted from the bounded registry, or the
+// gateway restarted since the message was sent.
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	id := message.DeliveryID(r.PathValue("id"))
+	entry, ok := s.statuses.lookup(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown delivery id")
+		return
+	}
+
+	response := statusResponse{ID: string(id), Status: entry.state}
+	switch entry.state {
+	case statusRetrying:
+		response.Attempts = entry.attempts
+		response.Error = entry.err
+		response.RetryInMS = entry.retryIn.Milliseconds()
+	case statusSent:
+		response.Attempts = entry.attempts
+		response.Receipt = &statusReceiptResponse{
+			MessageID: entry.receipt.MessageID,
+			SentAt:    formatTime(entry.receipt.SentAt),
+		}
+	case statusFailed:
+		response.Attempts = entry.attempts
+		response.Reason = entry.reason
+		response.Error = entry.err
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func ensureSingleJSON(decoder *json.Decoder) error {
