@@ -38,6 +38,9 @@ type Options struct {
 	// PingInterval is the WebSocket keepalive interval. Zero or negative uses
 	// 30s.
 	PingInterval time.Duration
+	// StatusCapacity bounds how many delivery statuses are tracked for the
+	// status query API. Zero or negative uses the default of 4096.
+	StatusCapacity int
 }
 
 // Server is the gateway's HTTP handler. It also owns the live WebSocket
@@ -48,6 +51,7 @@ type Server struct {
 	apiKeyHash   [sha256.Size]byte
 	hub          *hub
 	pingInterval time.Duration
+	statuses     *statusRegistry
 	connSeq      atomic.Uint64
 	mux          *http.ServeMux
 }
@@ -65,12 +69,18 @@ func New(enqueuer Enqueuer, opts Options) *Server {
 		pingInterval = defaultPingInterval
 	}
 
+	statusCapacity := opts.StatusCapacity
+	if statusCapacity <= 0 {
+		statusCapacity = defaultStatusCapacity
+	}
+
 	s := &Server{
 		enqueuer:     enqueuer,
 		senderKey:    opts.SenderKey,
 		apiKeyHash:   sha256.Sum256([]byte(opts.APIKey)),
 		hub:          newHub(maxConnections),
 		pingInterval: pingInterval,
+		statuses:     newStatusRegistry(statusCapacity),
 	}
 
 	mux := http.NewServeMux()

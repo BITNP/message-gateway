@@ -39,6 +39,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.WebSocketMaxConnections != 16 {
 		t.Errorf("WebSocketMaxConnections = %d, want 16", cfg.WebSocketMaxConnections)
 	}
+	if cfg.StatusCapacity != 4096 {
+		t.Errorf("StatusCapacity = %d, want 4096", cfg.StatusCapacity)
+	}
 	if cfg.NapCat.BaseURL != "http://napcat:3001" {
 		t.Errorf("NapCat.BaseURL = %q", cfg.NapCat.BaseURL)
 	}
@@ -89,6 +92,7 @@ func TestLoadCustom(t *testing.T) {
 		"MESSAGE_GATEWAY_API_KEY":    " secret ",
 		"MESSAGE_SENDER_KEY":         " qq-main ",
 		"MESSAGE_WS_MAX_CONNECTIONS": "4",
+		"MESSAGE_STATUS_CAPACITY":    "64",
 		"NAPCAT_BASE_URL":            " http://napcat:3001 ",
 		"NAPCAT_ACCESS_TOKEN":        " token ",
 		"NAPCAT_TIMEOUT":             "2s",
@@ -120,6 +124,9 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if cfg.WebSocketMaxConnections != 4 {
 		t.Errorf("WebSocketMaxConnections = %d, want 4", cfg.WebSocketMaxConnections)
+	}
+	if cfg.StatusCapacity != 64 {
+		t.Errorf("StatusCapacity = %d, want 64", cfg.StatusCapacity)
 	}
 	if cfg.NapCat.BaseURL != "http://napcat:3001" {
 		t.Errorf("BaseURL = %q", cfg.NapCat.BaseURL)
@@ -208,6 +215,8 @@ func TestLoadInvalidValues(t *testing.T) {
 		{"queue size", "MESSAGE_QUEUE_SIZE", "0"},
 		{"queue size not a number", "MESSAGE_QUEUE_SIZE", "many"},
 		{"websocket connections", "MESSAGE_WS_MAX_CONNECTIONS", "0"},
+		{"status capacity", "MESSAGE_STATUS_CAPACITY", "0"},
+		{"status capacity not a number", "MESSAGE_STATUS_CAPACITY", "many"},
 		{"send timeout", "MESSAGE_SEND_TIMEOUT", "0s"},
 		{"max attempts", "MESSAGE_MAX_ATTEMPTS", "0"},
 		{"retry backoff", "MESSAGE_RETRY_BACKOFF", "-1s"},

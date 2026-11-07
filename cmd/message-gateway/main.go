@@ -48,6 +48,7 @@ func main() {
 		SenderKey:      cfg.SenderKey,
 		APIKey:         cfg.APIKey,
 		MaxConnections: cfg.WebSocketMaxConnections,
+		StatusCapacity: cfg.StatusCapacity,
 	})
 
 	server := &http.Server{

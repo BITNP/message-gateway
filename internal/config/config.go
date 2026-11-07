@@ -23,6 +23,8 @@ const (
 	defaultMaxAttempts  = 3
 	defaultRetryBackoff = 2 * time.Second
 
+	defaultStatusCapacity = 4096
+
 	defaultGapFixed   = 3 * time.Second
 	defaultGapLength  = time.Second
 	defaultGapPerRune = 50 * time.Millisecond
@@ -41,6 +43,7 @@ type Config struct {
 	APIKey                  string
 	SenderKey               string
 	WebSocketMaxConnections int
+	StatusCapacity          int
 	NapCat                  napcat.Config
 	Manager                 message.Config
 	Gap                     message.GapPolicy
@@ -70,6 +73,11 @@ func Load(getenv func(string) string) (Config, error) {
 	)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid MESSAGE_WS_MAX_CONNECTIONS: %w", err)
+	}
+
+	statusCapacity, err := parsePositiveIntSetting(getenv("MESSAGE_STATUS_CAPACITY"), defaultStatusCapacity)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid MESSAGE_STATUS_CAPACITY: %w", err)
 	}
 
 	baseURL := strings.TrimSpace(getenv("NAPCAT_BASE_URL"))
@@ -166,6 +174,7 @@ func Load(getenv func(string) string) (Config, error) {
 		APIKey:                  apiKey,
 		SenderKey:               senderKey,
 		WebSocketMaxConnections: webSocketMaxConnections,
+		StatusCapacity:          statusCapacity,
 		NapCat: napcat.Config{
 			BaseURL:          baseURL,
 			AccessToken:      strings.TrimSpace(getenv("NAPCAT_ACCESS_TOKEN")),
