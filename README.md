@@ -168,16 +168,197 @@ docker compose -f docker-compose.napcat.yml down
 and send endpoints the gateway uses and records every send attempt. It never
 connects to QQ.
 
-### With Compose
+### Manual run with host binaries
 
-The gateway network must exist first:
+**Terminal 1 — start fake NapCat:**
 
 ```bash
-docker compose up -d
-docker compose -f docker-compose.fake-napcat.yml up -d
+cd /home/potato/Projects/clinic/message-gateway
+go run ./cmd/fake-napcat -token local-token
 ```
 
-Send through the gateway as usual, then inspect or reset the fake:
+It listens on `:3001` by default. Keep this terminal running.
+
+**Create `accounts.json`:**
+
+The gateway requires a non-empty `access_token` for `napcat`. Use the same value
+as the fake server's `-token`.
+
+```bash
+cd /home/potato/Projects/clinic/message-gateway
+cat > accounts.json <<'EOF'
+{
+  "accounts": [
+    {
+      "name": "qq",
+      "driver": "napcat",
+      "address": "http://127.0.0.1:3001",
+      "access_token": "local-token"
+    }
+  ]
+}
+EOF
+chmod 600 accounts.json
+```
+
+`accounts.json` is gitignored.
+
+**Terminal 2 — start the gateway:**
+
+```bash
+cd /home/potato/Projects/clinic/message-gateway
+export MESSAGE_GATEWAY_API_KEY=test-key
+export MESSAGE_ACCOUNTS_FILE=./accounts.json
+go run ./cmd/message-gateway
+```
+
+Expected log:
+
+```text
+message-gateway listening on :8081 (accounts qq)
+```
+
+The gateway does not load `.env` automatically; the exports matter.
+
+**Send a private message:**
+
+```bash
+curl -i -X POST http://127.0.0.1:8081/api/v1/messages \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello from gateway"}'
+```
+
+Expected response:
+
+```json
+{"id":"qq-1","status":"queued"}
+```
+
+`platform` is the account name from `accounts.json`; it is required.
+
+**Check the delivery status:**
+
+```bash
+curl -s http://127.0.0.1:8081/api/v1/messages/qq-1 \
+  -H "Authorization: Bearer test-key"
+```
+
+You may briefly see `queued`, then:
+
+```json
+{
+  "id": "qq-1",
+  "status": "sent",
+  "attempts": 1,
+  "receipt": {
+    "message_id": "1000",
+    "sent_at": "2026-11-08T..."
+  }
+}
+```
+
+**Inspect what the fake server received:**
+
+```bash
+curl -s http://127.0.0.1:3001/_messages
+```
+
+You should see the text, target, and fake message id:
+
+```json
+[
+  {
+    "kind": "private",
+    "user_id": 10001,
+    "text": "hello from gateway",
+    "message_id": 1000,
+    "at": "2026-11-08T..."
+  }
+]
+```
+
+**Send a group message:**
+
+```bash
+curl -s -X POST http://127.0.0.1:8081/api/v1/messages \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"qq","target":{"kind":"group","id":"20001"},"text":"group hello"}'
+```
+
+**Reset the fake server:**
+
+```bash
+curl -s -X POST http://127.0.0.1:3001/_reset
+```
+
+**Health check:**
+
+```bash
+curl -s http://127.0.0.1:8081/healthz
+```
+
+**WebSocket (optional, requires `websocat`):**
+
+```bash
+websocat -H "Authorization: Bearer test-key" ws://127.0.0.1:8081/api/v1/ws
+```
+
+Then send:
+
+```json
+{"type":"send","request_id":"r1","platform":"qq","target":{"kind":"user","id":"10001"},"text":"websocket hello"}
+```
+
+Expected frames:
+
+```json
+{"type":"ready","version":1,"accounts":[{"name":"qq","driver":"napcat"}]}
+{"type":"queued","request_id":"r1","id":"qq-1"}
+{"type":"sent","request_id":"r1","id":"qq-1","message_id":"1000","sent_at":"..."}
+```
+
+**Common mistakes:**
+
+- `400 account is required` — `platform` was omitted. It is always required.
+- `400 unknown account "..."` — `platform` must match an entry `name` in
+  `accounts.json`.
+- Startup error `access_token is required for napcat` — add a non-empty
+  `access_token`.
+- Delivery fails with `401` — the account token does not match the fake’s
+  `-token`.
+- `202` but nothing arrives — check `curl http://127.0.0.1:3001/_messages` and
+  the gateway logs.
+- Port `3001` already in use — a real NapCat is probably running; stop it or
+  change both the fake address and the account address.
+- The second message stays `queued` for a few seconds — the default gap is 3s
+  plus jitter.
+
+### With Compose
+
+Create the account file first; Compose mounts it into the gateway:
+
+```bash
+cp .env.example .env
+# set MESSAGE_GATEWAY_API_KEY=test-key in .env
+
+cp accounts.example.json accounts.json
+# keep the address as http://napcat:3001
+# set a non-empty access_token; the Compose fake has no token configured and
+# ignores the Authorization header
+```
+
+The gateway network must exist before the fake stack starts:
+
+```bash
+docker compose up -d --build
+docker compose -f docker-compose.fake-napcat.yml up -d --build
+```
+
+Then send through the gateway as usual. The gateway publishes
+`127.0.0.1:8081`, and the fake publishes `127.0.0.1:3001`, so the manual
+`curl` commands above work unchanged:
 
 ```bash
 curl http://127.0.0.1:3001/_messages
@@ -186,18 +367,6 @@ curl -X POST http://127.0.0.1:3001/_reset
 
 From `clinic-backend`, `scripts/dev.sh --fake-napcat` starts and stops this fake
 stack automatically.
-
-### With host binaries
-
-```bash
-# Terminal 1
-go run ./cmd/fake-napcat
-
-# Terminal 2: an accounts.json entry with address http://127.0.0.1:3001
-MESSAGE_GATEWAY_API_KEY=test \
-MESSAGE_ACCOUNTS_FILE=./accounts.json \
-go run ./cmd/message-gateway
-```
 
 ### Fake configuration
 
@@ -227,7 +396,8 @@ Useful scenarios:
 - **Permanent drop:** set `FAKE_NAPCAT_FAIL_FIRST=1` and
   `FAKE_NAPCAT_FAIL_MODE=permanent`.
 
-The fake accepts unauthenticated requests by default. An explicitly empty
+The fake accepts unauthenticated requests by default. When it is started
+without `-token`, it ignores the gateway’s bearer token. An explicitly empty
 `FAKE_NAPCAT_FRIENDS`, `FAKE_NAPCAT_GROUPS`, or `FAKE_NAPCAT_MEMBERS` clears
 that list.
 
