@@ -10,6 +10,8 @@ the HTTP and WebSocket APIs. It was extracted from
 - Bearer-authenticated `POST /api/v1/messages` for private or group QQ messages.
 - Bearer-authenticated `GET /api/v1/ws` that reports `queued`, `retrying`,
   `sent`, and `failed` for each message, with pipelined requests.
+- Bearer-authenticated `GET /api/v1/messages/{id}` that reports the latest
+  delivery status of a message sent over either transport.
 - Asynchronous delivery through one in-memory FIFO queue per sender.
 - Configurable gap policy, retry policy, and queue capacity.
 - Friend/group/member directory sync with shared-group delivery for non-friends.
@@ -208,6 +210,7 @@ separately if you need it locally, or use
 | `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. Use the same value in the backend. |
 | `MESSAGE_SENDER_KEY` | `qq` | Queue key; also used as `Message.Sender`. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
+| `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
 | `NAPCAT_BASE_URL` | required | NapCat OneBot 11 HTTP endpoint. |
 | `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for NapCat's OneBot server. |
 | `NAPCAT_TIMEOUT` | `10s` | Per-request NapCat timeout. |
@@ -256,9 +259,12 @@ Used only by `docker-compose.napcat.yml`.
 ## Behavior and limitations
 
 - The queue is in-memory. Pending messages are lost when the process stops.
+- Delivery statuses are kept in memory, bounded by `MESSAGE_STATUS_CAPACITY`
+  (oldest evicted first), and lost when the process stops.
 - One gateway instance owns one sender/QQ account.
 - Over HTTP, `202 Accepted` means the message was queued, not delivered. Use
-  `GET /api/v1/ws` when the send outcome matters.
+  `GET /api/v1/messages/{id}` or `GET /api/v1/ws` when the send outcome
+  matters.
 - Over WebSocket, `sent` means NapCat accepted the message; it does not prove
   the recipient read it. Delivery events belong to the connection that
   enqueued the message and are not replayed after a reconnect.

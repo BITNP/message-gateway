@@ -30,6 +30,7 @@ All errors share one shape:
 | `401 Unauthorized` | Missing or invalid bearer token |
 | `413 Request Entity Too Large` | Request body exceeds 1 MiB |
 | `429 Too Many Requests` | The sender's queue is full. Retry after `Retry-After: 1`. |
+| `404 Not Found` | Unknown delivery id on the status query endpoint. Other unmatched routes return a plain-text `404`. |
 | `503 Service Unavailable` | The gateway is shutting down |
 | `500 Internal Server Error` | Unexpected server error |
 
@@ -96,7 +97,8 @@ so requests do not carry a sender field. The request body is limited to 1 MiB.
 ```
 
 `202` means the message was accepted into the in-memory queue. It does not mean
-NapCat delivered it. There is no delivery-status or cancellation endpoint.
+NapCat delivered it. Query the outcome with `GET /api/v1/messages/{id}` or the
+WebSocket endpoint. There is no cancellation endpoint.
 
 **Error responses:** `400` (malformed body or invalid field), `401` (bad token),
 `413` (body too large), `429` (queue full), `503` (gateway shutting down).
@@ -117,6 +119,75 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
   -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"group","id":"20002"},"text":"group hello"}'
+```
+
+### `GET /api/v1/messages/{id}`
+
+Reports the latest known delivery state for one enqueued message. The `id` is
+the delivery id returned by `POST /api/v1/messages` or by a WebSocket `queued`
+frame; both transports feed the same status registry.
+
+The registry lives in memory and is bounded by `MESSAGE_STATUS_CAPACITY`
+(default `4096`): once it holds more entries, the oldest are evicted. Statuses
+are also lost when the gateway restarts. `404` therefore means the id was
+never enqueued in this process, was evicted, or predates a restart.
+
+**Response `200 OK`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Echo of the requested delivery id. |
+| `status` | string | `queued`, `retrying`, `sent`, or `failed`. |
+| `attempts` | number | Completed send attempts. Present except for `queued`. |
+| `error` | string | Last send error. Present for `retrying` and `failed`. |
+| `retry_in_ms` | number | Delay before the next attempt. Only for `retrying`. |
+| `reason` | string | `permanent` or `exhausted`. Only for `failed`. |
+| `receipt` | object | `{ "message_id", "sent_at" }`. Only for `sent`. |
+
+```json
+{ "id": "qq-1", "status": "queued" }
+```
+
+```json
+{
+  "id": "qq-1",
+  "status": "retrying",
+  "attempts": 1,
+  "error": "message: transient send failure: send_group_msg request: connection reset",
+  "retry_in_ms": 2000
+}
+```
+
+```json
+{
+  "id": "qq-1",
+  "status": "sent",
+  "attempts": 1,
+  "receipt": { "message_id": "12345", "sent_at": "2026-11-07T03:14:15.9Z" }
+}
+```
+
+```json
+{
+  "id": "qq-1",
+  "status": "failed",
+  "attempts": 3,
+  "reason": "exhausted",
+  "error": "message: transient send failure: send_group_msg request: context deadline exceeded"
+}
+```
+
+As with the WebSocket frames, `sent` means NapCat accepted the message; it does
+not prove the recipient read it. `sent_at` is RFC 3339 in UTC.
+
+**Error responses:** `401` (bad token), `404` (`{ "error": "unknown delivery
+id" }`).
+
+**curl**
+
+```bash
+curl http://127.0.0.1:8081/api/v1/messages/qq-1 \
+  -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY"
 ```
 
 ### `GET /api/v1/ws`
@@ -268,10 +339,14 @@ process, not across restarts.
 - The queue is in-memory. Pending messages are lost when the gateway restarts.
 - A full queue returns `429 Too Many Requests` with `Retry-After: 1` over HTTP,
   and an `error` frame with `code: "queue_full"` over WebSocket.
-- `202 Accepted` only means the message was queued; use the WebSocket endpoint
-  when the delivery outcome matters.
+- `202 Accepted` only means the message was queued; query the delivery status
+  with `GET /api/v1/messages/{id}` or use the WebSocket endpoint when the
+  outcome matters.
 - Sends are paced by the configured gap policy and retried according to
   `MESSAGE_MAX_ATTEMPTS` and `MESSAGE_RETRY_BACKOFF`.
+- Delivery statuses for `GET /api/v1/messages/{id}` live in a bounded
+  in-memory registry (`MESSAGE_STATUS_CAPACITY`, default `4096`); the oldest
+  entries are evicted first, and all statuses are lost on restart.
 - Requests have no idempotency key. Retrying a request can duplicate a send.
 - The gateway is intended to run as one instance per sender/QQ account.
 
@@ -283,3 +358,4 @@ process, not across restarts.
 | `MESSAGE_GATEWAY_API_KEY` | — (required) | Bearer token for `/api/v1/*`. |
 | `MESSAGE_SENDER_KEY` | `qq` | Sender key used for queued messages. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
+| `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
