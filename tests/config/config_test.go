@@ -22,7 +22,8 @@ const defaultAccounts = `{
     {
       "name": "qq",
       "driver": "napcat",
-      "address": "http://napcat:3001"
+      "address": "http://napcat:3001",
+      "access_token": "test-token"
     }
   ]
 }`
@@ -78,6 +79,9 @@ func TestLoadDefaults(t *testing.T) {
 	if account.Address != "http://napcat:3001" {
 		t.Errorf("Address = %q", account.Address)
 	}
+	if account.AccessToken != "test-token" {
+		t.Errorf("AccessToken = %q, want test-token", account.AccessToken)
+	}
 	if account.Timeout != 10*time.Second {
 		t.Errorf("Timeout = %v, want 10s", account.Timeout)
 	}
@@ -123,6 +127,7 @@ func TestLoadCustom(t *testing.T) {
       "name": "qq-main",
       "driver": "napcat",
       "address": "http://napcat:3001/",
+      "access_token": " secret-token ",
       "timeout": "2s",
       "directory_refresh": "10m",
       "directory_retry": "1s",
@@ -132,7 +137,8 @@ func TestLoadCustom(t *testing.T) {
     {
       "name": "qq-backup",
       "driver": "napcat",
-      "address": "https://napcat-backup:3002"
+      "address": "https://napcat-backup:3002",
+      "access_token": "backup-token"
     }
   ]
 }`
@@ -179,6 +185,9 @@ func TestLoadCustom(t *testing.T) {
 	if primary.Address != "http://napcat:3001" {
 		t.Errorf("Address = %q, want trailing slash trimmed", primary.Address)
 	}
+	if primary.AccessToken != "secret-token" {
+		t.Errorf("AccessToken = %q, want secret-token", primary.AccessToken)
+	}
 	if primary.Timeout != 2*time.Second {
 		t.Errorf("Timeout = %v, want 2s", primary.Timeout)
 	}
@@ -201,6 +210,9 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if backup.Address != "https://napcat-backup:3002" {
 		t.Errorf("Address = %q", backup.Address)
+	}
+	if backup.AccessToken != "backup-token" {
+		t.Errorf("AccessToken = %q, want backup-token", backup.AccessToken)
 	}
 	if backup.Timeout != 10*time.Second {
 		t.Errorf("Timeout = %v, want default 10s", backup.Timeout)
@@ -290,8 +302,8 @@ func TestLoadRejectsInvalidAccountsFile(t *testing.T) {
 			name: "duplicate names",
 			contents: `{
   "accounts": [
-    {"name": "qq", "driver": "napcat", "address": "http://napcat-a:3001"},
-    {"name": "qq", "driver": "napcat", "address": "http://napcat-b:3001"}
+    {"name": "qq", "driver": "napcat", "address": "http://napcat-a:3001", "access_token": "token-a"},
+    {"name": "qq", "driver": "napcat", "address": "http://napcat-b:3001", "access_token": "token-b"}
   ]
 }`,
 		},
@@ -324,6 +336,14 @@ func TestLoadRejectsInvalidAccountsFile(t *testing.T) {
 			contents: `{
   "accounts": [
     {"name": "qq", "driver": "napcat"}
+  ]
+}`,
+		},
+		{
+			name: "missing access token",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001"}
   ]
 }`,
 		},

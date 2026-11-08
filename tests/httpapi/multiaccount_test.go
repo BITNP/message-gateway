@@ -19,10 +19,11 @@ import (
 	"message-gateway/internal/message"
 )
 
-func startFakeNapCat(t *testing.T, messageIDStart int64) (*fakenapcat.Server, string) {
+func startFakeNapCat(t *testing.T, messageIDStart int64, accessToken string) (*fakenapcat.Server, string) {
 	t.Helper()
 
 	fake, err := fakenapcat.NewServer(fakenapcat.Config{
+		AccessToken:    accessToken,
 		Friends:        []int64{10001},
 		Groups:         []int64{20001},
 		Members:        []int64{10001},
@@ -38,13 +39,13 @@ func startFakeNapCat(t *testing.T, messageIDStart int64) (*fakenapcat.Server, st
 }
 
 func TestMultiAccountEndToEnd(t *testing.T) {
-	fakeA, urlA := startFakeNapCat(t, 1000)
-	fakeB, urlB := startFakeNapCat(t, 2000)
+	fakeA, urlA := startFakeNapCat(t, 1000, "token-a")
+	fakeB, urlB := startFakeNapCat(t, 2000, "token-b")
 
 	contents := fmt.Sprintf(`{
   "accounts": [
-    {"name": "qq-a", "driver": "napcat", "address": %q},
-    {"name": "qq-b", "driver": "napcat", "address": %q}
+    {"name": "qq-a", "driver": "napcat", "address": %q, "access_token": "token-a"},
+    {"name": "qq-b", "driver": "napcat", "address": %q, "access_token": "token-b"}
   ]
 }`, urlA, urlB)
 	path := filepath.Join(t.TempDir(), "accounts.json")

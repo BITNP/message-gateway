@@ -4,6 +4,7 @@ package accounts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -59,8 +60,13 @@ func Build(cfgs []config.Account) (*Registry, error) {
 func buildAccount(cfg config.Account) (Account, runner, error) {
 	switch cfg.Driver {
 	case "napcat":
+		if cfg.AccessToken == "" {
+			return Account{}, nil, errors.New("access_token is required for napcat")
+		}
+
 		client, err := napcat.NewClient(napcat.Config{
 			BaseURL:          cfg.Address,
+			AccessToken:      cfg.AccessToken,
 			Timeout:          cfg.Timeout,
 			DirectoryRefresh: cfg.DirectoryRefresh,
 			DirectoryRetry:   cfg.DirectoryRetry,

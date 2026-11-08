@@ -49,6 +49,7 @@ type Account struct {
 	Name             string
 	Driver           string
 	Address          string
+	AccessToken      string
 	Timeout          time.Duration
 	DirectoryRefresh time.Duration
 	DirectoryRetry   time.Duration
@@ -188,6 +189,7 @@ type fileAccount struct {
 	Name             string `json:"name"`
 	Driver           string `json:"driver"`
 	Address          string `json:"address"`
+	AccessToken      string `json:"access_token"`
 	Timeout          string `json:"timeout"`
 	DirectoryRefresh string `json:"directory_refresh"`
 	DirectoryRetry   string `json:"directory_retry"`
@@ -292,10 +294,16 @@ func buildAccount(fa fileAccount) (Account, error) {
 		groupTempSession = *fa.GroupTempSession
 	}
 
+	accessToken := strings.TrimSpace(fa.AccessToken)
+	if driver == "napcat" && accessToken == "" {
+		return Account{}, errors.New("access_token is required for napcat")
+	}
+
 	return Account{
 		Name:             name,
 		Driver:           driver,
 		Address:          address,
+		AccessToken:      accessToken,
 		Timeout:          timeout,
 		DirectoryRefresh: directoryRefresh,
 		DirectoryRetry:   directoryRetry,

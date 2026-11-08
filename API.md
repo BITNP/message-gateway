@@ -29,11 +29,16 @@ WeChat account identity.
     {
       "name": "qq",
       "driver": "napcat",
-      "address": "http://napcat:3001"
+      "address": "http://napcat:3001",
+      "access_token": "replace-with-napcat-token"
     }
   ]
 }
 ```
+
+`access_token` is required for `napcat` accounts; it is sent as a bearer token
+to the OneBot service. Keep `accounts.json` out of version control and restrict
+its permissions when it contains a token.
 
 The account `name` is the value clients send in the `platform` field. It is
 also the prefix of delivery ids. The field is required.

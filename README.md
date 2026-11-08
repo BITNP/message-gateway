@@ -32,9 +32,10 @@ export MESSAGE_ACCOUNTS_FILE=./accounts.json
 go run ./cmd/message-gateway
 ```
 
-The gateway listens on `:8081` by default. Account definitions live only in
-`accounts.json`; the gateway no longer reads `NAPCAT_BASE_URL` or
-`NAPCAT_ACCESS_TOKEN`. Compose uses `http://napcat:3001` in the example file.
+The gateway listens on `:8081` by default. Account definitions and per-account
+bearer tokens live only in `accounts.json`; the gateway no longer reads
+`NAPCAT_BASE_URL` or `NAPCAT_ACCESS_TOKEN`. Compose uses
+`http://napcat:3001` in the example file.
 
 ```bash
 curl http://127.0.0.1:8081/healthz
@@ -63,12 +64,14 @@ independent and get their own client, queue, and pacing.
     {
       "name": "qq",
       "driver": "napcat",
-      "address": "http://napcat:3001"
+      "address": "http://napcat:3001",
+      "access_token": "replace-with-napcat-token"
     },
     {
       "name": "qq-backup",
       "driver": "napcat",
-      "address": "http://napcat-backup:3001"
+      "address": "http://napcat-backup:3001",
+      "access_token": "replace-with-backup-token"
     }
   ]
 }
@@ -79,6 +82,7 @@ independent and get their own client, queue, and pacing.
 | `name` | yes | Unique account name, `^[a-z0-9][a-z0-9_-]{0,31}$`. Clients send it in `platform`; delivery ids use it as a prefix. |
 | `driver` | yes | `napcat` (currently the only implemented driver). |
 | `address` | yes | Base URL of the OneBot HTTP service, `http` or `https`. |
+| `access_token` | yes for `napcat` | Bearer token for the OneBot HTTP server. Copy the token configured in NapCat. |
 | `timeout` | no | Per-request timeout, default `10s`. |
 | `directory_refresh` | no | Friend/group directory refresh interval, default `30m`. |
 | `directory_retry` | no | Initial directory sync retry interval, default `5s`. |
@@ -87,6 +91,9 @@ independent and get their own client, queue, and pacing.
 
 Account config is read once at startup. Restart the service after editing the
 file. Every request must name an account in `platform`.
+
+`accounts.json` may contain bearer tokens, so keep it out of version control
+and restrict its permissions (`chmod 600 accounts.json`).
 
 ## Docker Compose
 
@@ -141,8 +148,8 @@ Then configure NapCat:
    `NAPCAT_QUICK_ACCOUNT` in `.env` to reuse the saved session.
 3. In NapCat's network settings, enable the OneBot 11 **HTTP server** on port
    `3001`.
-4. Leave the OneBot HTTP access token disabled. The gateway does not send a
-   token; it only needs the service address.
+4. Put the OneBot HTTP token from NapCat into the account's `access_token`
+   field. The gateway requires it for `napcat` accounts.
 5. Set the account address to `http://napcat:3001` when using the sample stack.
 
 To run the gateway against an existing NapCat, set that entry's `address` in
@@ -270,9 +277,9 @@ separately if you need it locally, or use
 | `MESSAGE_GAP_JITTER` | `1s` | Random extra gap in `[0, jitter)`. |
 | `MESSAGE_GAP_MIN` | `1s` | Lower bound for any gap. |
 
-Account-specific settings (`timeout`, `directory_refresh`, `directory_retry`,
-`directory_timeout`, `group_temp_session`) live in `accounts.json`; see
-[Accounts](#accounts).
+Account-specific settings (`access_token`, `timeout`, `directory_refresh`,
+`directory_retry`, `directory_timeout`, `group_temp_session`) live in
+`accounts.json`; see [Accounts](#accounts).
 
 Gap calculation:
 
