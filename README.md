@@ -1,7 +1,7 @@
 # message-gateway
 
 Standalone outbound message gateway for clinic services. It owns the NapCat /
-OneBot 11 transport, the per-sender FIFO queue, gap-based pacing, retries, and
+OneBot 11 transport, the per-account FIFO queue, gap-based pacing, retries, and
 the HTTP and WebSocket APIs. It was extracted from
 `clinic-backend/internal/message` and keeps that behavior.
 
@@ -12,7 +12,8 @@ the HTTP and WebSocket APIs. It was extracted from
   `sent`, and `failed` for each message, with pipelined requests.
 - Bearer-authenticated `GET /api/v1/messages/{id}` that reports the latest
   delivery status of a message sent over either transport.
-- Asynchronous delivery through one in-memory FIFO queue per sender.
+- Asynchronous delivery through one in-memory FIFO queue per configured account.
+- Multiple accounts per gateway, each with its own endpoint, queue, and pacing.
 - Configurable gap policy, retry policy, and queue capacity.
 - Friend/group/member directory sync with shared-group delivery for non-friends.
 - Public `GET /healthz` liveness endpoint.
@@ -23,14 +24,17 @@ the HTTP and WebSocket APIs. It was extracted from
 ## Local binary
 
 ```bash
+cp accounts.example.json accounts.json
+# Edit accounts.json so each address points at a reachable OneBot service.
+
 export MESSAGE_GATEWAY_API_KEY="$(openssl rand -hex 32)"
-export NAPCAT_BASE_URL=http://127.0.0.1:3001
-export NAPCAT_ACCESS_TOKEN=   # optional, matches NapCat's OneBot token
+export MESSAGE_ACCOUNTS_FILE=./accounts.json
 go run ./cmd/message-gateway
 ```
 
-The gateway listens on `:8081` by default. `NAPCAT_BASE_URL` should point at a
-host-run NapCat for this mode; Compose uses `http://napcat:3001` internally.
+The gateway listens on `:8081` by default. Account definitions live only in
+`accounts.json`; the gateway no longer reads `NAPCAT_BASE_URL` or
+`NAPCAT_ACCESS_TOKEN`. Compose uses `http://napcat:3001` in the example file.
 
 ```bash
 curl http://127.0.0.1:8081/healthz
@@ -46,6 +50,44 @@ websocat -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
 
 See [API.md](API.md) for the full HTTP and WebSocket contract.
 
+## Accounts
+
+Each object in the `accounts` array is one outbound endpoint. The gateway does
+not know which platform account is logged in behind the address; NapCat or the
+OneBot service owns that identity. Entries with the same `driver` are
+independent and get their own client, queue, and pacing.
+
+```json
+{
+  "accounts": [
+    {
+      "name": "qq",
+      "driver": "napcat",
+      "address": "http://napcat:3001"
+    },
+    {
+      "name": "qq-backup",
+      "driver": "napcat",
+      "address": "http://napcat-backup:3001"
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | yes | Unique account name, `^[a-z0-9][a-z0-9_-]{0,31}$`. Clients send it in `platform`; delivery ids use it as a prefix. |
+| `driver` | yes | `napcat` (currently the only implemented driver). |
+| `address` | yes | Base URL of the OneBot HTTP service, `http` or `https`. |
+| `timeout` | no | Per-request timeout, default `10s`. |
+| `directory_refresh` | no | Friend/group directory refresh interval, default `30m`. |
+| `directory_retry` | no | Initial directory sync retry interval, default `5s`. |
+| `directory_timeout` | no | One directory sync timeout, default `60s`. |
+| `group_temp_session` | no | Deliver to non-friends through shared groups, default `true`. |
+
+Account config is read once at startup. Restart the service after editing the
+file. Every request must name an account in `platform`.
+
 ## Docker Compose
 
 The main Compose stack runs only the gateway. NapCat is an external dependency;
@@ -53,13 +95,19 @@ a sample NapCat stack is provided in `docker-compose.napcat.yml`.
 
 ```bash
 cp .env.example .env
+cp accounts.example.json accounts.json
 chmod 600 .env
 # Edit .env and set MESSAGE_GATEWAY_API_KEY, for example:
 #   openssl rand -hex 32
+# Edit accounts.json so each address points at a OneBot service.
 
 docker compose up -d --build
 docker compose logs -f message-gateway
 ```
+
+The main Compose file mounts `./accounts.json` read-only at
+`/etc/message-gateway/accounts.json` and sets `MESSAGE_ACCOUNTS_FILE`. Create
+the file before starting the stack.
 
 Use `--build` after changing gateway code. Production deployments use a
 prebuilt image and start with `--no-build` instead.
@@ -69,9 +117,9 @@ as an external network and reach the gateway at `http://message-gateway:8081`.
 
 ### NapCat
 
-The gateway connects to the OneBot HTTP endpoint in `NAPCAT_BASE_URL`. Point it
-at an existing NapCat, or start the sample stack after the gateway network
-exists:
+The gateway connects to the OneBot HTTP endpoint configured in
+`accounts.json`. Point it at an existing NapCat, or start the sample stack
+after the gateway network exists:
 
 ```bash
 mkdir -p napcat/config napcat/QQ
@@ -93,12 +141,12 @@ Then configure NapCat:
    `NAPCAT_QUICK_ACCOUNT` in `.env` to reuse the saved session.
 3. In NapCat's network settings, enable the OneBot 11 **HTTP server** on port
    `3001`.
-4. If you configure an access token on that server, put the same value in
-   `NAPCAT_ACCESS_TOKEN`.
-5. Keep `NAPCAT_BASE_URL=http://napcat:3001` when using the sample stack.
+4. Leave the OneBot HTTP access token disabled. The gateway does not send a
+   token; it only needs the service address.
+5. Set the account address to `http://napcat:3001` when using the sample stack.
 
-To run the gateway against an existing NapCat, set `NAPCAT_BASE_URL` to that
-endpoint and do not start the sample stack.
+To run the gateway against an existing NapCat, set that entry's `address` in
+`accounts.json` and do not start the sample stack.
 
 The sample stack uses the gateway's external `message-gateway` network. Stop it
 separately before removing the gateway network:
@@ -138,9 +186,9 @@ stack automatically.
 # Terminal 1
 go run ./cmd/fake-napcat
 
-# Terminal 2
+# Terminal 2: an accounts.json entry with address http://127.0.0.1:3001
 MESSAGE_GATEWAY_API_KEY=test \
-NAPCAT_BASE_URL=http://127.0.0.1:3001 \
+MESSAGE_ACCOUNTS_FILE=./accounts.json \
 go run ./cmd/message-gateway
 ```
 
@@ -149,7 +197,7 @@ go run ./cmd/message-gateway
 | Flag | Environment | Default | Description |
 | --- | --- | --- | --- |
 | `-addr` | `FAKE_NAPCAT_ADDR` | `:3001` | Listen address. |
-| `-token` | `FAKE_NAPCAT_ACCESS_TOKEN` | `NAPCAT_ACCESS_TOKEN` or empty | Require a bearer token. |
+| `-token` | `FAKE_NAPCAT_ACCESS_TOKEN` | empty | Require a bearer token. |
 | `-login-id` | `FAKE_NAPCAT_LOGIN_ID` | `10000` | Fake bot QQ id. |
 | `-login-nickname` | `FAKE_NAPCAT_LOGIN_NICKNAME` | `fake-napcat` | Fake bot nickname. |
 | `-friends` | `FAKE_NAPCAT_FRIENDS` | `10001` | Comma-separated friend ids. |
@@ -166,15 +214,15 @@ Useful scenarios:
 - **Group message:** default groups include `20001`.
 - **Non-friend temporary session:** set `FAKE_NAPCAT_FRIENDS=` and keep
   `FAKE_NAPCAT_MEMBERS=10001`; send to user `10001` with
-  `NAPCAT_GROUP_TEMP_SESSION=true`.
+  `"group_temp_session": true` in `accounts.json`.
 - **Transient retry:** set `FAKE_NAPCAT_FAIL_FIRST=1` and a short
   `MESSAGE_RETRY_BACKOFF`.
 - **Permanent drop:** set `FAKE_NAPCAT_FAIL_FIRST=1` and
   `FAKE_NAPCAT_FAIL_MODE=permanent`.
 
-The Compose fake reads `NAPCAT_ACCESS_TOKEN` so it shares the gateway's token.
-An explicitly empty `FAKE_NAPCAT_FRIENDS`, `FAKE_NAPCAT_GROUPS`, or
-`FAKE_NAPCAT_MEMBERS` clears that list.
+The fake accepts unauthenticated requests by default. An explicitly empty
+`FAKE_NAPCAT_FRIENDS`, `FAKE_NAPCAT_GROUPS`, or `FAKE_NAPCAT_MEMBERS` clears
+that list.
 
 The fake and the real sample NapCat both use service name `napcat` and host port
 `3001`. Do not run them at the same time. The fake is in-memory and dev-only; it
@@ -208,17 +256,10 @@ separately if you need it locally, or use
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
 | `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. Use the same value in the backend. |
-| `MESSAGE_SENDER_KEY` | `qq` | Queue key; also used as `Message.Sender`. |
+| `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
-| `NAPCAT_BASE_URL` | required | NapCat OneBot 11 HTTP endpoint. |
-| `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for NapCat's OneBot server. |
-| `NAPCAT_TIMEOUT` | `10s` | Per-request NapCat timeout. |
-| `NAPCAT_DIRECTORY_REFRESH` | `30m` | Friend/group directory refresh interval. |
-| `NAPCAT_DIRECTORY_RETRY` | `5s` | Initial directory sync retry interval. |
-| `NAPCAT_DIRECTORY_TIMEOUT` | `60s` | One directory sync timeout. |
-| `NAPCAT_GROUP_TEMP_SESSION` | `true` | Deliver to non-friends through shared groups. |
-| `MESSAGE_QUEUE_SIZE` | `100` | Per-sender queue capacity. |
+| `MESSAGE_QUEUE_SIZE` | `100` | Per-account queue capacity. |
 | `MESSAGE_SEND_TIMEOUT` | `30s` | Per-send timeout. |
 | `MESSAGE_MAX_ATTEMPTS` | `3` | Attempts before a message is dropped. |
 | `MESSAGE_RETRY_BACKOFF` | `2s` | Delay after a transient failure. |
@@ -228,6 +269,10 @@ separately if you need it locally, or use
 | `MESSAGE_GAP_PER_RUNE` | `50ms` | Per-rune gap in length mode. |
 | `MESSAGE_GAP_JITTER` | `1s` | Random extra gap in `[0, jitter)`. |
 | `MESSAGE_GAP_MIN` | `1s` | Lower bound for any gap. |
+
+Account-specific settings (`timeout`, `directory_refresh`, `directory_retry`,
+`directory_timeout`, `group_temp_session`) live in `accounts.json`; see
+[Accounts](#accounts).
 
 Gap calculation:
 
@@ -261,7 +306,10 @@ Used only by `docker-compose.napcat.yml`.
 - The queue is in-memory. Pending messages are lost when the process stops.
 - Delivery statuses are kept in memory, bounded by `MESSAGE_STATUS_CAPACITY`
   (oldest evicted first), and lost when the process stops.
-- One gateway instance owns one sender/QQ account.
+- One gateway instance serves every configured account. Each account has its
+  own client, queue, pacing, and worker.
+- Account config is read once at startup. Restart the service after editing
+  `accounts.json`; there is no hot reload.
 - Over HTTP, `202 Accepted` means the message was queued, not delivered. Use
   `GET /api/v1/messages/{id}` or `GET /api/v1/ws` when the send outcome
   matters.
@@ -270,7 +318,7 @@ Used only by `docker-compose.napcat.yml`.
   enqueued the message and are not replayed after a reconnect.
 - A client retry can duplicate a send because requests have no idempotency key.
 - Platform-specific validation, such as numeric QQ IDs, remains in the NapCat
-  sender. Invalid IDs are accepted at enqueue time and fail during delivery.
+  driver. Invalid IDs are accepted at enqueue time and fail during delivery.
 - `GET /healthz` is a liveness check. It does not report NapCat connectivity or
   directory readiness.
 - The gateway does not terminate TLS. Run it on a private network or behind a
@@ -280,12 +328,12 @@ Used only by `docker-compose.napcat.yml`.
 
 - **`401 Unauthorized`**: the backend token does not match
   `MESSAGE_GATEWAY_API_KEY`.
-- **`429 Too Many Requests`**: the sender queue is full. Clients can retry after
-  the `Retry-After` interval.
+- **`429 Too Many Requests`**: the account queue is full. Clients can retry
+  after the `Retry-After` interval.
 - **`202` but no message arrives**: check `docker compose logs message-gateway`
   and NapCat's logs. Confirm the OneBot HTTP server is enabled on port `3001`,
-  the access token matches, and the QQ account is logged in. If you use the
-  sample stack, inspect it with
+  the account address in `accounts.json` matches it, and the QQ account is
+  logged in. If you use the sample stack, inspect it with
   `docker compose -f docker-compose.napcat.yml logs napcat`.
 - **NapCat cannot write its data**: fix ownership of `napcat/config` and
   `napcat/QQ` to match `NAPCAT_UID` / `NAPCAT_GID`.
@@ -295,12 +343,14 @@ Used only by `docker-compose.napcat.yml`.
 ```text
 cmd/message-gateway/   service entry point
 cmd/fake-napcat/       dev-only fake OneBot server
-internal/config/       environment loading and validation
+internal/accounts/     per-account sender registry and driver factory
+internal/config/       environment and accounts.json loading/validation
 internal/fakenapcat/   fake OneBot implementation
 internal/httpapi/      HTTP and WebSocket transport
 internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests
+accounts.example.json  documented account template
 Dockerfile             multi-stage gateway image
 Dockerfile.fake-napcat dev-only fake image
 docker-compose.yml     gateway stack
@@ -329,10 +379,10 @@ it on the server, then start the stack with `--no-build`.
 
 ## Project status
 
-The gateway is ready for outbound text messaging. The next integration step is
-to wire backend business callers to `MESSAGE_GATEWAY_URL` and
-`MESSAGE_GATEWAY_API_KEY`, then remove the frozen `clinic-backend/internal/message`
-copy once nothing depends on it.
+The gateway is ready for outbound text messaging with multiple configured
+NapCat accounts. The next integration step is to wire backend business callers
+to `MESSAGE_GATEWAY_URL` and `MESSAGE_GATEWAY_API_KEY`, then remove the frozen
+`clinic-backend/internal/message` copy once nothing depends on it.
 
-Persistent queues, cancellation, replay across reconnects, multi-account
-routing, inbound messages, and new platforms are intentionally out of scope.
+Hot reload, persistent queues, cancellation, replay across reconnects, inbound
+messages, and new drivers are intentionally out of scope.

@@ -16,6 +16,28 @@ receive `401 Unauthorized`. The token is compared in constant time.
 
 `GET /healthz` is public.
 
+## Accounts
+
+The gateway sends through one or more configured accounts. Each account is one
+outbound endpoint in `accounts.json` (`MESSAGE_ACCOUNTS_FILE`), not a platform
+login. The service behind the address, such as NapCat, owns the actual QQ or
+WeChat account identity.
+
+```json
+{
+  "accounts": [
+    {
+      "name": "qq",
+      "driver": "napcat",
+      "address": "http://napcat:3001"
+    }
+  ]
+}
+```
+
+The account `name` is the value clients send in the `platform` field. It is
+also the prefix of delivery ids. The field is required.
+
 ## Errors
 
 All errors share one shape:
@@ -26,10 +48,10 @@ All errors share one shape:
 
 | Status | Meaning |
 | --- | --- |
-| `400 Bad Request` | Malformed JSON, missing required field, or invalid field value |
+| `400 Bad Request` | Malformed JSON, missing required field, invalid field value, or unknown account |
 | `401 Unauthorized` | Missing or invalid bearer token |
 | `413 Request Entity Too Large` | Request body exceeds 1 MiB |
-| `429 Too Many Requests` | The sender's queue is full. Retry after `Retry-After: 1`. |
+| `429 Too Many Requests` | The account's queue is full. Retry after `Retry-After: 1`. |
 | `404 Not Found` | Unknown delivery id on the status query endpoint. Other unmatched routes return a plain-text `404`. |
 | `503 Service Unavailable` | The gateway is shutting down |
 | `500 Internal Server Error` | Unexpected server error |
@@ -63,19 +85,19 @@ curl http://127.0.0.1:8081/healthz
 ### `POST /api/v1/messages`
 
 Enqueues an outbound message. The handler validates the request and returns
-immediately; delivery happens asynchronously through the sender's FIFO queue.
+immediately; delivery happens asynchronously through the account's FIFO queue.
 
 **Request body**
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `platform` | string | yes | Message platform. Currently only `qq`. |
+| `platform` | string | yes | Configured account name from `accounts.json`. |
 | `target.kind` | string | yes | `user` for a private chat or `group` for a group chat. |
-| `target.id` | string | yes | Numeric QQ user or group id, kept as a string. |
+| `target.id` | string | yes | Target id on the account's platform, kept as a string. |
 | `text` | string | yes | Message text. Must be non-blank. |
 
-The sender is configured by the gateway (`MESSAGE_SENDER_KEY`, default `qq`),
-so requests do not carry a sender field. The request body is limited to 1 MiB.
+The account named in `platform` selects the account and its queue. The request
+body is limited to 1 MiB.
 
 ```json
 {
@@ -210,8 +232,14 @@ websocat -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
 Immediately after the upgrade the server sends:
 
 ```json
-{ "type": "ready", "version": 1, "sender": "qq" }
+{
+  "type": "ready",
+  "version": 1,
+  "accounts": [{ "name": "qq", "driver": "napcat" }]
+}
 ```
+
+`accounts` lists every configured account.
 
 **Client frames**
 
@@ -219,9 +247,9 @@ Immediately after the upgrade the server sends:
 | --- | --- | --- | --- |
 | `type` | string | yes | `send` |
 | `request_id` | string | no | Echoed on every frame that answers this request |
-| `platform` | string | yes | Same values as the HTTP request body |
+| `platform` | string | yes | Configured account name. Same values as the HTTP request body |
 | `target.kind` | string | yes | `user` or `group` |
-| `target.id` | string | yes | Numeric QQ user or group id, kept as a string |
+| `target.id` | string | yes | Target id on the account's platform, kept as a string |
 | `text` | string | yes | Message text. Must be non-blank. |
 
 ```json
@@ -326,7 +354,8 @@ process, not across restarts.
 - Up to `MESSAGE_WS_MAX_CONNECTIONS` (default 16) connections are accepted;
   beyond that the upgrade is rejected with `503 Service Unavailable`.
 - The server pings every 30s and closes a peer that stops answering. A client
-  that stops reading is disconnected rather than allowed to stall the sender.
+  that stops reading is disconnected rather than allowed to stall the account
+  worker.
 - Messages live in memory only. If the gateway stops, queued deliveries are
   lost and connections close with `1001`; the outcome of an in-flight message is
   unknown. There is no replay and no idempotency key, so a client that resends
@@ -334,7 +363,7 @@ process, not across restarts.
 
 ## Queue semantics
 
-- Each sender has one bounded FIFO queue (`MESSAGE_QUEUE_SIZE`, default `100`).
+- Each account has one bounded FIFO queue (`MESSAGE_QUEUE_SIZE`, default `100`).
   HTTP requests and every WebSocket connection feed the same queue.
 - The queue is in-memory. Pending messages are lost when the gateway restarts.
 - A full queue returns `429 Too Many Requests` with `Retry-After: 1` over HTTP,
@@ -348,7 +377,8 @@ process, not across restarts.
   in-memory registry (`MESSAGE_STATUS_CAPACITY`, default `4096`); the oldest
   entries are evicted first, and all statuses are lost on restart.
 - Requests have no idempotency key. Retrying a request can duplicate a send.
-- The gateway is intended to run as one instance per sender/QQ account.
+- The gateway may serve several accounts; each has its own queue, pacing, and
+  worker. One process still runs all of them.
 
 ## Related configuration
 
@@ -356,6 +386,6 @@ process, not across restarts.
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | Address the HTTP API and WebSocket endpoint listen on. |
 | `MESSAGE_GATEWAY_API_KEY` | — (required) | Bearer token for `/api/v1/*`. |
-| `MESSAGE_SENDER_KEY` | `qq` | Sender key used for queued messages. |
+| `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |

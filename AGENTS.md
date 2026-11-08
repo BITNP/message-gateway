@@ -13,10 +13,11 @@ transport.
   change as any route, request/response field, status code, authentication, or
   supported-value change.
 - Preserve the migrated behavior unless a behavior change is explicitly
-  requested. Do not add inbound messaging, persistence, multi-account routing,
-  delivery status/cancellation, new platforms, or admin endpoints on your own.
+  requested. Do not add inbound messaging, persistence, delivery
+  status/cancellation, new platforms, or admin endpoints on your own.
 - Keep responsibilities separated:
-  - `internal/config`: environment loading and validation;
+  - `internal/config`: environment and `accounts.json` loading and validation;
+  - `internal/accounts`: per-account sender construction and registry;
   - `internal/message`: platform-neutral model, queue, and manager;
   - `internal/napcat`: OneBot/NapCat transport and platform-specific validation;
   - `internal/httpapi`: HTTP transport only.
