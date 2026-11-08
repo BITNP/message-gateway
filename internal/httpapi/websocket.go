@@ -319,7 +319,7 @@ func (c *wsConn) handleSend(request wsSendRequest) {
 		return
 	}
 
-	id, err := c.server.enqueuer.EnqueueObserved(c.ctx, msg, c.onDelivery)
+	id, err := c.server.enqueuer.EnqueueObserved(c.ctx, msg, c.onEnqueue)
 	if err != nil {
 		switch {
 		case errors.Is(err, message.ErrInvalidMessage):
@@ -337,8 +337,10 @@ func (c *wsConn) handleSend(request wsSendRequest) {
 
 	// Record the request id and acknowledge before the connection goroutine
 	// can read the delivery outcome. That is what keeps "queued" ahead of any
-	// later frame for the same delivery.
+	// later frame for the same delivery. The status is registered before the
+	// frame too, so the client can query the id as soon as it sees it.
 	c.pending[id] = request.RequestID
+	c.server.statuses.register(id)
 	if err := c.writeJSON(wsQueuedFrame{
 		Type:      "queued",
 		RequestID: request.RequestID,
@@ -352,6 +354,14 @@ func (c *wsConn) handleSend(request wsSendRequest) {
 // the inbox, which never blocks.
 func (c *wsConn) onDelivery(update message.DeliveryUpdate) {
 	c.deliveries.push(update)
+}
+
+// onEnqueue is the observer for messages enqueued on this connection. It
+// records the shared status registry first and then the connection's inbox;
+// both steps are non-blocking, as the DeliveryObserver contract requires.
+func (c *wsConn) onEnqueue(update message.DeliveryUpdate) {
+	c.server.statuses.update(update)
+	c.onDelivery(update)
 }
 
 func (c *wsConn) handleDelivery(update message.DeliveryUpdate) {
