@@ -37,10 +37,15 @@ const (
 	statusGoingAway = websocket.StatusGoingAway
 )
 
+type wsReadyAccount struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
 type wsReadyFrame struct {
-	Type    string `json:"type"`
-	Version int    `json:"version"`
-	Sender  string `json:"sender"`
+	Type     string           `json:"type"`
+	Version  int              `json:"version"`
+	Accounts []wsReadyAccount `json:"accounts"`
 }
 
 type wsErrorFrame struct {
@@ -200,10 +205,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		)
 	}()
 
+	readyAccounts := make([]wsReadyAccount, 0, len(s.accountList))
+	for _, account := range s.accountList {
+		readyAccounts = append(readyAccounts, wsReadyAccount{
+			Name:   account.Name,
+			Driver: account.Driver,
+		})
+	}
 	if err := c.writeJSON(wsReadyFrame{
-		Type:    "ready",
-		Version: wsProtocolVersion,
-		Sender:  s.senderKey,
+		Type:     "ready",
+		Version:  wsProtocolVersion,
+		Accounts: readyAccounts,
 	}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "write failed")
 		return
@@ -313,7 +325,13 @@ func (c *wsConn) handleFrame(data []byte) {
 }
 
 func (c *wsConn) handleSend(request wsSendRequest) {
-	msg := messageFromRequest(c.server.senderKey, request.Platform, request.Target, request.Text)
+	account, err := c.server.resolveAccount(request.Platform)
+	if err != nil {
+		c.sendError(request.RequestID, "bad_request", err.Error(), 0)
+		return
+	}
+
+	msg := messageFromRequest(account, request.Target, request.Text)
 	if err := msg.Validate(); err != nil {
 		c.sendError(request.RequestID, "bad_request", err.Error(), 0)
 		return

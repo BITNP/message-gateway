@@ -55,8 +55,32 @@ func (f *fakeEnqueuer) lastMessage() message.Message {
 
 func newHandler(enqueuer httpapi.Enqueuer) *httpapi.Server {
 	return httpapi.New(enqueuer, httpapi.Options{
-		SenderKey: "qq",
-		APIKey:    testAPIKey,
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+		APIKey: testAPIKey,
+	})
+}
+
+func newMultiAccountHandler(enqueuer httpapi.Enqueuer) *httpapi.Server {
+	return httpapi.New(enqueuer, httpapi.Options{
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+			"qq-backup": {
+				Name:     "qq-backup",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+		APIKey: testAPIKey,
 	})
 }
 
@@ -208,6 +232,53 @@ func TestSendGroup(t *testing.T) {
 	}
 }
 
+func TestSendRequiresAccount(t *testing.T) {
+	enqueuer := &fakeEnqueuer{}
+	handler := newHandler(enqueuer)
+
+	body := `{"target":{"kind":"user","id":"10001"},"text":"hello"}`
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", body, bearerToken())
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if enqueuer.callCount() != 0 {
+		t.Error("enqueuer was called without an account selector")
+	}
+}
+
+func TestSendRoutesByAccountName(t *testing.T) {
+	enqueuer := &fakeEnqueuer{}
+	handler := newMultiAccountHandler(enqueuer)
+
+	body := `{"platform":"qq-backup","target":{"kind":"user","id":"10001"},"text":"hello"}`
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", body, bearerToken())
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+
+	msg := enqueuer.lastMessage()
+	if msg.Sender != "qq-backup" {
+		t.Errorf("sender = %q, want qq-backup", msg.Sender)
+	}
+	if msg.Platform != message.PlatformQQ {
+		t.Errorf("platform = %q, want qq", msg.Platform)
+	}
+}
+
+func TestSendRejectsUnknownAccount(t *testing.T) {
+	enqueuer := &fakeEnqueuer{}
+	handler := newMultiAccountHandler(enqueuer)
+
+	body := `{"platform":"telegram","target":{"kind":"user","id":"10001"},"text":"hello"}`
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", body, bearerToken())
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if enqueuer.callCount() != 0 {
+		t.Error("enqueuer was called for an unknown account")
+	}
+}
+
 func TestSendRejectsInvalidRequests(t *testing.T) {
 	tests := []struct {
 		name string
@@ -217,8 +288,7 @@ func TestSendRejectsInvalidRequests(t *testing.T) {
 		{"malformed json", "{"},
 		{"json array", "[]"},
 		{"json null", "null"},
-		{"missing platform", `{"target":{"kind":"user","id":"10001"},"text":"hello"}`},
-		{"unsupported platform", `{"platform":"telegram","target":{"kind":"user","id":"10001"},"text":"hello"}`},
+		{"unknown account", `{"platform":"telegram","target":{"kind":"user","id":"10001"},"text":"hello"}`},
 		{"missing target", `{"platform":"qq","text":"hello"}`},
 		{"unsupported target kind", `{"platform":"qq","target":{"kind":"channel","id":"10001"},"text":"hello"}`},
 		{"missing target id", `{"platform":"qq","target":{"kind":"user"},"text":"hello"}`},

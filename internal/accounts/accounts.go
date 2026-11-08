@@ -102,16 +102,6 @@ func (r *Registry) Len() int {
 	return len(r.order)
 }
 
-// DefaultName returns the only account name when exactly one account is
-// configured. Callers must name an account when the registry has more than
-// one.
-func (r *Registry) DefaultName() string {
-	if len(r.order) == 1 {
-		return r.order[0]
-	}
-	return ""
-}
-
 // Run starts every account's background worker and blocks until ctx is done.
 func (r *Registry) Run(ctx context.Context) {
 	var wg sync.WaitGroup

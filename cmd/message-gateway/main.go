@@ -8,14 +8,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"message-gateway/internal/accounts"
 	"message-gateway/internal/config"
 	"message-gateway/internal/httpapi"
 	"message-gateway/internal/message"
-	"message-gateway/internal/napcat"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -26,17 +27,19 @@ func main() {
 		log.Fatalf("configuration: %v", err)
 	}
 
-	client, err := napcat.NewClient(cfg.NapCat)
+	registry, err := accounts.Build(cfg.Accounts)
 	if err != nil {
-		log.Fatalf("napcat client: %v", err)
+		log.Fatalf("accounts: %v", err)
 	}
 
 	manager, err := message.NewManager(cfg.Manager)
 	if err != nil {
 		log.Fatalf("message manager: %v", err)
 	}
-	if err := manager.Register(cfg.SenderKey, client, cfg.Gap); err != nil {
-		log.Fatalf("register sender: %v", err)
+	for _, account := range registry.List() {
+		if err := manager.Register(account.Name, account.Sender, cfg.Gap); err != nil {
+			log.Fatalf("register account %s: %v", account.Name, err)
+		}
 	}
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
@@ -45,7 +48,7 @@ func main() {
 	}
 
 	api := httpapi.New(manager, httpapi.Options{
-		SenderKey:      cfg.SenderKey,
+		Accounts:       httpapiAccounts(registry),
 		APIKey:         cfg.APIKey,
 		MaxConnections: cfg.WebSocketMaxConnections,
 		StatusCapacity: cfg.StatusCapacity,
@@ -68,7 +71,7 @@ func main() {
 	background.Add(2)
 	go func() {
 		defer background.Done()
-		client.Run(runCtx)
+		registry.Run(runCtx)
 	}()
 	go func() {
 		defer background.Done()
@@ -80,11 +83,14 @@ func main() {
 		serveErr <- server.Serve(listener)
 	}()
 
+	names := make([]string, 0, registry.Len())
+	for _, account := range registry.List() {
+		names = append(names, account.Name)
+	}
 	log.Printf(
-		"message-gateway listening on %s (sender %s, napcat %s)",
+		"message-gateway listening on %s (accounts %s)",
 		cfg.HTTPAddr,
-		cfg.SenderKey,
-		cfg.NapCat.BaseURL,
+		strings.Join(names, ", "),
 	)
 
 	exitCode := 0
@@ -117,4 +123,16 @@ func main() {
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+func httpapiAccounts(registry *accounts.Registry) map[string]httpapi.Account {
+	out := make(map[string]httpapi.Account, registry.Len())
+	for _, account := range registry.List() {
+		out[account.Name] = httpapi.Account{
+			Name:     account.Name,
+			Driver:   account.Driver,
+			Platform: account.Platform,
+		}
+	}
+	return out
 }

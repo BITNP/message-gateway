@@ -286,7 +286,13 @@ func TestStatusRequiresAuth(t *testing.T) {
 func TestStatusEvictsOldest(t *testing.T) {
 	enqueuer := &statusEnqueuer{}
 	handler := httpapi.New(enqueuer, httpapi.Options{
-		SenderKey:      "qq",
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
 		APIKey:         testAPIKey,
 		StatusCapacity: 2,
 	})

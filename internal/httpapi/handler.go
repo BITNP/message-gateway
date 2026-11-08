@@ -47,7 +47,13 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := messageFromRequest(s.senderKey, request.Platform, request.Target, request.Text)
+	account, err := s.resolveAccount(request.Platform)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	msg := messageFromRequest(account, request.Target, request.Text)
 	if err := msg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -139,14 +145,13 @@ func ensureSingleJSON(decoder *json.Decoder) error {
 // messageFromRequest normalizes a transport-level send request into a
 // message. Both HTTP and WebSocket use it so validation cannot drift.
 func messageFromRequest(
-	senderKey string,
-	platform string,
+	account Account,
 	target targetRequest,
 	text string,
 ) message.Message {
 	return message.Message{
-		Platform: message.Platform(strings.ToLower(strings.TrimSpace(platform))),
-		Sender:   senderKey,
+		Platform: account.Platform,
+		Sender:   account.Name,
 		Target: message.Target{
 			Kind: message.TargetKind(strings.ToLower(strings.TrimSpace(target.Kind))),
 			ID:   strings.TrimSpace(target.ID),

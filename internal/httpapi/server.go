@@ -4,7 +4,11 @@ package httpapi
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -26,10 +30,17 @@ type Enqueuer interface {
 	) (message.DeliveryID, error)
 }
 
+// Account describes one configured endpoint to the HTTP transport.
+type Account struct {
+	Name     string
+	Driver   string
+	Platform message.Platform
+}
+
 // Options configures the gateway HTTP transport.
 type Options struct {
-	// SenderKey is the sender configured for queued messages.
-	SenderKey string
+	// Accounts maps configured account names to their transport metadata.
+	Accounts map[string]Account
 	// APIKey is the bearer token required by `/api/v1/*`.
 	APIKey string
 	// MaxConnections caps concurrent WebSocket connections. Zero or negative
@@ -47,7 +58,8 @@ type Options struct {
 // connections so that shutdown can close them.
 type Server struct {
 	enqueuer     Enqueuer
-	senderKey    string
+	accounts     map[string]Account
+	accountList  []Account
 	apiKeyHash   [sha256.Size]byte
 	hub          *hub
 	pingInterval time.Duration
@@ -74,9 +86,23 @@ func New(enqueuer Enqueuer, opts Options) *Server {
 		statusCapacity = defaultStatusCapacity
 	}
 
+	accounts := make(map[string]Account, len(opts.Accounts))
+	accountList := make([]Account, 0, len(opts.Accounts))
+	for name, account := range opts.Accounts {
+		if account.Name == "" {
+			account.Name = name
+		}
+		accounts[name] = account
+		accountList = append(accountList, account)
+	}
+	sort.Slice(accountList, func(i, j int) bool {
+		return accountList[i].Name < accountList[j].Name
+	})
+
 	s := &Server{
 		enqueuer:     enqueuer,
-		senderKey:    opts.SenderKey,
+		accounts:     accounts,
+		accountList:  accountList,
 		apiKeyHash:   sha256.Sum256([]byte(opts.APIKey)),
 		hub:          newHub(maxConnections),
 		pingInterval: pingInterval,
@@ -108,4 +134,18 @@ func (s *Server) CloseWebSockets() {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// resolveAccount maps a request's account name to a configured account.
+func (s *Server) resolveAccount(name string) (Account, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return Account{}, errors.New("account is required")
+	}
+
+	account, ok := s.accounts[name]
+	if !ok {
+		return Account{}, fmt.Errorf("unknown account %q", name)
+	}
+	return account, nil
 }

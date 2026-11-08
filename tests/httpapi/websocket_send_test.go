@@ -92,7 +92,15 @@ func newSendGateway(
 		mgr.Run(ctx)
 	}()
 
-	srv, api := newWebSocketServerWith(t, mgr, httpapi.Options{SenderKey: "qq"})
+	srv, api := newWebSocketServerWith(t, mgr, httpapi.Options{
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+	})
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -328,12 +336,20 @@ func TestWebSocketReportsExhaustedRetries(t *testing.T) {
 
 func TestWebSocketSendMapsMessage(t *testing.T) {
 	enqueuer := &fakeEnqueuer{id: "qq-9"}
-	srv, _ := newWebSocketServerWith(t, enqueuer, httpapi.Options{SenderKey: "qq-main"})
+	srv, _ := newWebSocketServerWith(t, enqueuer, httpapi.Options{
+		Accounts: map[string]httpapi.Account{
+			"qq-main": {
+				Name:     "qq-main",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+	})
 
 	conn := dialWebSocket(t, srv, testAPIKey)
 	_ = readFrame(t, conn) // ready
 
-	writeFrame(t, conn, `{"type":"send","request_id":"r-1","platform":" QQ ",`+
+	writeFrame(t, conn, `{"type":"send","request_id":"r-1","platform":" qq-main ",`+
 		`"target":{"kind":" GROUP ","id":" 20002 "},"text":"group hello"}`)
 
 	queued := decodeFrame[queuedFrame](t, readFrame(t, conn))

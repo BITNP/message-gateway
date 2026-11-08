@@ -77,8 +77,14 @@ func newEndToEndGateway(t *testing.T) (*fakenapcat.Server, *httptest.Server) {
 	})
 
 	api := httpapi.New(manager, httpapi.Options{
-		SenderKey: "qq",
-		APIKey:    testAPIKey,
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+		APIKey: testAPIKey,
 	})
 	gateway := httptest.NewServer(api)
 	t.Cleanup(gateway.Close)

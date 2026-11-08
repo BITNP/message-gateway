@@ -12,12 +12,18 @@ import (
 	"github.com/coder/websocket"
 
 	"message-gateway/internal/httpapi"
+	"message-gateway/internal/message"
 )
 
+type readyAccount struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
 type readyFrame struct {
-	Type    string `json:"type"`
-	Version int    `json:"version"`
-	Sender  string `json:"sender"`
+	Type     string         `json:"type"`
+	Version  int            `json:"version"`
+	Accounts []readyAccount `json:"accounts"`
 }
 
 type errorFrame struct {
@@ -44,8 +50,14 @@ func newWebSocketServerWith(
 ) (*httptest.Server, *httpapi.Server) {
 	t.Helper()
 
-	if opts.SenderKey == "" {
-		opts.SenderKey = "qq"
+	if len(opts.Accounts) == 0 {
+		opts.Accounts = map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		}
 	}
 	if opts.APIKey == "" {
 		opts.APIKey = testAPIKey
@@ -165,7 +177,15 @@ func TestWebSocketRejectsNonUpgradeRequest(t *testing.T) {
 }
 
 func TestWebSocketReadyFrame(t *testing.T) {
-	srv, _ := newWebSocketServer(t, httpapi.Options{SenderKey: "qq-main"})
+	srv, _ := newWebSocketServer(t, httpapi.Options{
+		Accounts: map[string]httpapi.Account{
+			"qq-main": {
+				Name:     "qq-main",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
+	})
 	conn := dialWebSocket(t, srv, testAPIKey)
 
 	ready := decodeFrame[readyFrame](t, readFrame(t, conn))
@@ -175,8 +195,11 @@ func TestWebSocketReadyFrame(t *testing.T) {
 	if ready.Version != 1 {
 		t.Errorf("version = %d, want 1", ready.Version)
 	}
-	if ready.Sender != "qq-main" {
-		t.Errorf("sender = %q, want qq-main", ready.Sender)
+	if len(ready.Accounts) != 1 {
+		t.Fatalf("accounts length = %d, want 1", len(ready.Accounts))
+	}
+	if ready.Accounts[0].Name != "qq-main" || ready.Accounts[0].Driver != "napcat" {
+		t.Errorf("account = %+v", ready.Accounts[0])
 	}
 }
 
@@ -255,7 +278,13 @@ func TestWebSocketMaxConnections(t *testing.T) {
 
 func TestWebSocketKeepaliveSurvivesServerTimeouts(t *testing.T) {
 	api := httpapi.New(&fakeEnqueuer{}, httpapi.Options{
-		SenderKey:    "qq",
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:     "qq",
+				Driver:   "napcat",
+				Platform: message.PlatformQQ,
+			},
+		},
 		APIKey:       testAPIKey,
 		PingInterval: 20 * time.Millisecond,
 	})

@@ -22,7 +22,7 @@ const shutdownTimeout = 5 * time.Second
 func main() {
 	flags := flag.NewFlagSet("fake-napcat", flag.ExitOnError)
 	addr := flags.String("addr", envString("FAKE_NAPCAT_ADDR", fakenapcat.DefaultAddr), "HTTP listen address")
-	token := flags.String("token", envString("FAKE_NAPCAT_ACCESS_TOKEN", os.Getenv("NAPCAT_ACCESS_TOKEN")), "optional bearer token")
+	token := flags.String("token", os.Getenv("FAKE_NAPCAT_ACCESS_TOKEN"), "optional bearer token")
 	loginID := flags.Int64("login-id", envInt64("FAKE_NAPCAT_LOGIN_ID", fakenapcat.DefaultLoginID), "fake bot QQ id")
 	nickname := flags.String("login-nickname", envString("FAKE_NAPCAT_LOGIN_NICKNAME", fakenapcat.DefaultLoginNickname), "fake bot nickname")
 	friends := flags.String("friends", envListString("FAKE_NAPCAT_FRIENDS", "10001"), "comma-separated friend ids")
