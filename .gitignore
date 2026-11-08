@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+/accounts.json
 
 # NapCat runtime data (configs, plugins, QQ login state).
 /napcat/

@@ -7,8 +7,8 @@ name: message-gateway-napcat
 # Then start this sample:
 #   docker compose -f docker-compose.napcat.yml up -d
 #
-# The sample joins the gateway network with the service name `napcat`, which
-# matches the default NAPCAT_BASE_URL=http://napcat:3001.
+# The sample joins the gateway network with the service name `napcat`. Point
+# the `qq` entry in accounts.json at http://napcat:3001.
 
 services:
   napcat:

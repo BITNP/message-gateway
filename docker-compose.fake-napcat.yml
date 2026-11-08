@@ -7,9 +7,9 @@ name: message-gateway-fake-napcat
 # Then start the fake:
 #   docker compose -f docker-compose.fake-napcat.yml up -d
 #
-# The service is named `napcat`, so the gateway's default
-# NAPCAT_BASE_URL=http://napcat:3001 works unchanged. Do not run this at the
-# same time as the real sample stack in docker-compose.napcat.yml.
+# The service is named `napcat`, so an account entry with
+# address = "http://napcat:3001" works unchanged. Do not run this at the same
+# time as the real sample stack in docker-compose.napcat.yml.
 
 services:
   napcat:
@@ -20,7 +20,6 @@ services:
     restart: unless-stopped
     environment:
       FAKE_NAPCAT_ADDR: ":3001"
-      FAKE_NAPCAT_ACCESS_TOKEN: "${NAPCAT_ACCESS_TOKEN:-}"
       FAKE_NAPCAT_LOGIN_ID: "${FAKE_NAPCAT_LOGIN_ID:-10000}"
       FAKE_NAPCAT_LOGIN_NICKNAME: "${FAKE_NAPCAT_LOGIN_NICKNAME:-fake-napcat}"
       FAKE_NAPCAT_FRIENDS: "${FAKE_NAPCAT_FRIENDS-10001}"

@@ -1,0 +1,9 @@
+{
+  "accounts": [
+    {
+      "name": "qq",
+      "driver": "napcat",
+      "address": "http://napcat:3001"
+    }
+  ]
+}

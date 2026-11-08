@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,15 +17,37 @@ func envMap(values map[string]string) func(string) string {
 	}
 }
 
-func validEnv() map[string]string {
+const defaultAccounts = `{
+  "accounts": [
+    {
+      "name": "qq",
+      "driver": "napcat",
+      "address": "http://napcat:3001"
+    }
+  ]
+}`
+
+func writeAccounts(t *testing.T, contents string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "accounts.json")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write accounts file: %v", err)
+	}
+	return path
+}
+
+func validEnv(t *testing.T, contents string) map[string]string {
+	t.Helper()
+
 	return map[string]string{
 		"MESSAGE_GATEWAY_API_KEY": "test-key",
-		"NAPCAT_BASE_URL":         "http://napcat:3001",
+		"MESSAGE_ACCOUNTS_FILE":   writeAccounts(t, contents),
 	}
 }
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := config.Load(envMap(validEnv()))
+	cfg, err := config.Load(envMap(validEnv(t, defaultAccounts)))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -33,34 +58,39 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.APIKey != "test-key" {
 		t.Errorf("APIKey = %q, want test-key", cfg.APIKey)
 	}
-	if cfg.SenderKey != "qq" {
-		t.Errorf("SenderKey = %q, want qq", cfg.SenderKey)
-	}
 	if cfg.WebSocketMaxConnections != 16 {
 		t.Errorf("WebSocketMaxConnections = %d, want 16", cfg.WebSocketMaxConnections)
 	}
 	if cfg.StatusCapacity != 4096 {
 		t.Errorf("StatusCapacity = %d, want 4096", cfg.StatusCapacity)
 	}
-	if cfg.NapCat.BaseURL != "http://napcat:3001" {
-		t.Errorf("NapCat.BaseURL = %q", cfg.NapCat.BaseURL)
+
+	if len(cfg.Accounts) != 1 {
+		t.Fatalf("Accounts length = %d, want 1", len(cfg.Accounts))
 	}
-	if cfg.NapCat.AccessToken != "" {
-		t.Errorf("NapCat.AccessToken = %q, want empty", cfg.NapCat.AccessToken)
+	account := cfg.Accounts[0]
+	if account.Name != "qq" {
+		t.Errorf("Name = %q, want qq", account.Name)
 	}
-	if cfg.NapCat.Timeout != 10*time.Second {
-		t.Errorf("NapCat.Timeout = %v, want 10s", cfg.NapCat.Timeout)
+	if account.Driver != "napcat" {
+		t.Errorf("Driver = %q, want napcat", account.Driver)
 	}
-	if cfg.NapCat.DirectoryRefresh != 30*time.Minute {
-		t.Errorf("DirectoryRefresh = %v, want 30m", cfg.NapCat.DirectoryRefresh)
+	if account.Address != "http://napcat:3001" {
+		t.Errorf("Address = %q", account.Address)
 	}
-	if cfg.NapCat.DirectoryRetry != 5*time.Second {
-		t.Errorf("DirectoryRetry = %v, want 5s", cfg.NapCat.DirectoryRetry)
+	if account.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want 10s", account.Timeout)
 	}
-	if cfg.NapCat.DirectoryTimeout != 60*time.Second {
-		t.Errorf("DirectoryTimeout = %v, want 60s", cfg.NapCat.DirectoryTimeout)
+	if account.DirectoryRefresh != 30*time.Minute {
+		t.Errorf("DirectoryRefresh = %v, want 30m", account.DirectoryRefresh)
 	}
-	if !cfg.NapCat.GroupTempSession {
+	if account.DirectoryRetry != 5*time.Second {
+		t.Errorf("DirectoryRetry = %v, want 5s", account.DirectoryRetry)
+	}
+	if account.DirectoryTimeout != 60*time.Second {
+		t.Errorf("DirectoryTimeout = %v, want 60s", account.DirectoryTimeout)
+	}
+	if !account.GroupTempSession {
 		t.Error("GroupTempSession = false, want true")
 	}
 
@@ -87,28 +117,41 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadCustom(t *testing.T) {
-	cfg, err := config.Load(envMap(map[string]string{
-		"HTTP_ADDR":                  " 127.0.0.1:9090 ",
-		"MESSAGE_GATEWAY_API_KEY":    " secret ",
-		"MESSAGE_SENDER_KEY":         " qq-main ",
-		"MESSAGE_WS_MAX_CONNECTIONS": "4",
-		"MESSAGE_STATUS_CAPACITY":    "64",
-		"NAPCAT_BASE_URL":            " http://napcat:3001 ",
-		"NAPCAT_ACCESS_TOKEN":        " token ",
-		"NAPCAT_TIMEOUT":             "2s",
-		"NAPCAT_DIRECTORY_REFRESH":   "10m",
-		"NAPCAT_DIRECTORY_RETRY":     "1s",
-		"NAPCAT_DIRECTORY_TIMEOUT":   "20s",
-		"NAPCAT_GROUP_TEMP_SESSION":  "false",
-		"MESSAGE_QUEUE_SIZE":         "5",
-		"MESSAGE_SEND_TIMEOUT":       "4s",
-		"MESSAGE_MAX_ATTEMPTS":       "2",
-		"MESSAGE_RETRY_BACKOFF":      "1s",
-		"MESSAGE_GAP_MODE":           "fixed",
-		"MESSAGE_GAP_FIXED":          "2s",
-		"MESSAGE_GAP_JITTER":         "0s",
-		"MESSAGE_GAP_MIN":            "500ms",
-	}))
+	contents := `{
+  "accounts": [
+    {
+      "name": "qq-main",
+      "driver": "napcat",
+      "address": "http://napcat:3001/",
+      "timeout": "2s",
+      "directory_refresh": "10m",
+      "directory_retry": "1s",
+      "directory_timeout": "20s",
+      "group_temp_session": false
+    },
+    {
+      "name": "qq-backup",
+      "driver": "napcat",
+      "address": "https://napcat-backup:3002"
+    }
+  ]
+}`
+
+	values := validEnv(t, contents)
+	values["HTTP_ADDR"] = " 127.0.0.1:9090 "
+	values["MESSAGE_GATEWAY_API_KEY"] = " secret "
+	values["MESSAGE_WS_MAX_CONNECTIONS"] = "4"
+	values["MESSAGE_STATUS_CAPACITY"] = "64"
+	values["MESSAGE_QUEUE_SIZE"] = "5"
+	values["MESSAGE_SEND_TIMEOUT"] = "4s"
+	values["MESSAGE_MAX_ATTEMPTS"] = "2"
+	values["MESSAGE_RETRY_BACKOFF"] = "1s"
+	values["MESSAGE_GAP_MODE"] = "fixed"
+	values["MESSAGE_GAP_FIXED"] = "2s"
+	values["MESSAGE_GAP_JITTER"] = "0s"
+	values["MESSAGE_GAP_MIN"] = "500ms"
+
+	cfg, err := config.Load(envMap(values))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -119,36 +162,53 @@ func TestLoadCustom(t *testing.T) {
 	if cfg.APIKey != "secret" {
 		t.Errorf("APIKey = %q, want secret", cfg.APIKey)
 	}
-	if cfg.SenderKey != "qq-main" {
-		t.Errorf("SenderKey = %q, want qq-main", cfg.SenderKey)
-	}
 	if cfg.WebSocketMaxConnections != 4 {
 		t.Errorf("WebSocketMaxConnections = %d, want 4", cfg.WebSocketMaxConnections)
 	}
 	if cfg.StatusCapacity != 64 {
 		t.Errorf("StatusCapacity = %d, want 64", cfg.StatusCapacity)
 	}
-	if cfg.NapCat.BaseURL != "http://napcat:3001" {
-		t.Errorf("BaseURL = %q", cfg.NapCat.BaseURL)
+
+	if len(cfg.Accounts) != 2 {
+		t.Fatalf("Accounts length = %d, want 2", len(cfg.Accounts))
 	}
-	if cfg.NapCat.AccessToken != "token" {
-		t.Errorf("AccessToken = %q, want token", cfg.NapCat.AccessToken)
+	primary := cfg.Accounts[0]
+	if primary.Name != "qq-main" {
+		t.Errorf("Name = %q, want qq-main", primary.Name)
 	}
-	if cfg.NapCat.Timeout != 2*time.Second {
-		t.Errorf("NapCat.Timeout = %v, want 2s", cfg.NapCat.Timeout)
+	if primary.Address != "http://napcat:3001" {
+		t.Errorf("Address = %q, want trailing slash trimmed", primary.Address)
 	}
-	if cfg.NapCat.DirectoryRefresh != 10*time.Minute {
-		t.Errorf("DirectoryRefresh = %v, want 10m", cfg.NapCat.DirectoryRefresh)
+	if primary.Timeout != 2*time.Second {
+		t.Errorf("Timeout = %v, want 2s", primary.Timeout)
 	}
-	if cfg.NapCat.DirectoryRetry != time.Second {
-		t.Errorf("DirectoryRetry = %v, want 1s", cfg.NapCat.DirectoryRetry)
+	if primary.DirectoryRefresh != 10*time.Minute {
+		t.Errorf("DirectoryRefresh = %v, want 10m", primary.DirectoryRefresh)
 	}
-	if cfg.NapCat.DirectoryTimeout != 20*time.Second {
-		t.Errorf("DirectoryTimeout = %v, want 20s", cfg.NapCat.DirectoryTimeout)
+	if primary.DirectoryRetry != time.Second {
+		t.Errorf("DirectoryRetry = %v, want 1s", primary.DirectoryRetry)
 	}
-	if cfg.NapCat.GroupTempSession {
+	if primary.DirectoryTimeout != 20*time.Second {
+		t.Errorf("DirectoryTimeout = %v, want 20s", primary.DirectoryTimeout)
+	}
+	if primary.GroupTempSession {
 		t.Error("GroupTempSession = true, want false")
 	}
+
+	backup := cfg.Accounts[1]
+	if backup.Name != "qq-backup" {
+		t.Errorf("Name = %q, want qq-backup", backup.Name)
+	}
+	if backup.Address != "https://napcat-backup:3002" {
+		t.Errorf("Address = %q", backup.Address)
+	}
+	if backup.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want default 10s", backup.Timeout)
+	}
+	if !backup.GroupTempSession {
+		t.Error("GroupTempSession = false, want default true")
+	}
+
 	if cfg.Manager.QueueSize != 5 {
 		t.Errorf("QueueSize = %d, want 5", cfg.Manager.QueueSize)
 	}
@@ -171,14 +231,13 @@ func TestLoadCustom(t *testing.T) {
 }
 
 func TestLoadLengthGap(t *testing.T) {
-	cfg, err := config.Load(envMap(map[string]string{
-		"MESSAGE_GATEWAY_API_KEY": "test-key",
-		"NAPCAT_BASE_URL":         "http://napcat:3001",
-		"MESSAGE_GAP_MODE":        "length",
-		"MESSAGE_GAP_LENGTH_BASE": "1s",
-		"MESSAGE_GAP_PER_RUNE":    "100ms",
-		"MESSAGE_GAP_JITTER":      "0s",
-	}))
+	values := validEnv(t, defaultAccounts)
+	values["MESSAGE_GAP_MODE"] = "length"
+	values["MESSAGE_GAP_LENGTH_BASE"] = "1s"
+	values["MESSAGE_GAP_PER_RUNE"] = "100ms"
+	values["MESSAGE_GAP_JITTER"] = "0s"
+
+	cfg, err := config.Load(envMap(values))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -189,20 +248,166 @@ func TestLoadLengthGap(t *testing.T) {
 }
 
 func TestLoadRequiresAPIKey(t *testing.T) {
-	_, err := config.Load(envMap(map[string]string{
-		"NAPCAT_BASE_URL": "http://napcat:3001",
-	}))
+	values := validEnv(t, defaultAccounts)
+	delete(values, "MESSAGE_GATEWAY_API_KEY")
+
+	_, err := config.Load(envMap(values))
 	if err == nil {
 		t.Fatal("Load() error = nil, want missing API key error")
 	}
 }
 
-func TestLoadRequiresNapCatBaseURL(t *testing.T) {
+func TestLoadRequiresAccountsFile(t *testing.T) {
 	_, err := config.Load(envMap(map[string]string{
 		"MESSAGE_GATEWAY_API_KEY": "test-key",
 	}))
 	if err == nil {
-		t.Fatal("Load() error = nil, want missing NapCat base URL error")
+		t.Fatal("Load() error = nil, want missing accounts file error")
+	}
+	if !strings.Contains(err.Error(), "MESSAGE_ACCOUNTS_FILE") {
+		t.Fatalf("Load() error = %v, want MESSAGE_ACCOUNTS_FILE", err)
+	}
+}
+
+func TestLoadRejectsInvalidAccountsFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{
+			name:     "empty file",
+			contents: "",
+		},
+		{
+			name:     "missing accounts",
+			contents: `{}`,
+		},
+		{
+			name:     "malformed json",
+			contents: `{"accounts": [`,
+		},
+		{
+			name: "duplicate names",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat-a:3001"},
+    {"name": "qq", "driver": "napcat", "address": "http://napcat-b:3001"}
+  ]
+}`,
+		},
+		{
+			name: "invalid name",
+			contents: `{
+  "accounts": [
+    {"name": "QQ Main", "driver": "napcat", "address": "http://napcat:3001"}
+  ]
+}`,
+		},
+		{
+			name: "unknown driver",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "onebot", "address": "http://onebot:5700"}
+  ]
+}`,
+		},
+		{
+			name: "missing driver",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "address": "http://napcat:3001"}
+  ]
+}`,
+		},
+		{
+			name: "missing address",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat"}
+  ]
+}`,
+		},
+		{
+			name: "bad scheme",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "ftp://napcat:3001"}
+  ]
+}`,
+		},
+		{
+			name: "query in address",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001?token=x"}
+  ]
+}`,
+		},
+		{
+			name: "credentials in address",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://user:pass@napcat:3001"}
+  ]
+}`,
+		},
+		{
+			name: "bad timeout",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "timeout": "soon"}
+  ]
+}`,
+		},
+		{
+			name: "zero timeout",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "timeout": "0s"}
+  ]
+}`,
+		},
+		{
+			name: "negative directory refresh",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "directory_refresh": "-1s"}
+  ]
+}`,
+		},
+		{
+			name: "unknown account key",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "port": 3001}
+  ]
+}`,
+		},
+		{
+			name: "non-boolean group temp session",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "group_temp_session": "yes"}
+  ]
+}`,
+		},
+		{
+			name: "trailing json",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001"}
+  ]
+} {}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Load(envMap(validEnv(t, tt.contents)))
+			if err == nil {
+				t.Fatalf("Load() error = nil for %s", tt.name)
+			}
+		})
 	}
 }
 
@@ -226,16 +431,11 @@ func TestLoadInvalidValues(t *testing.T) {
 		{"gap per rune", "MESSAGE_GAP_PER_RUNE", "-1s"},
 		{"gap jitter", "MESSAGE_GAP_JITTER", "-1s"},
 		{"gap min", "MESSAGE_GAP_MIN", "-1s"},
-		{"napcat timeout", "NAPCAT_TIMEOUT", "0s"},
-		{"directory refresh", "NAPCAT_DIRECTORY_REFRESH", "0s"},
-		{"directory retry", "NAPCAT_DIRECTORY_RETRY", "0s"},
-		{"directory timeout", "NAPCAT_DIRECTORY_TIMEOUT", "0s"},
-		{"group temp session", "NAPCAT_GROUP_TEMP_SESSION", "sometimes"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			values := validEnv()
+			values := validEnv(t, defaultAccounts)
 			values[tt.key] = tt.value
 
 			if _, err := config.Load(envMap(values)); err == nil {
