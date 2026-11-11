@@ -4,7 +4,8 @@
       "name": "qq",
       "driver": "napcat",
       "address": "http://napcat:3001",
-      "access_token": "replace-with-napcat-token"
+      "access_token": "replace-with-napcat-token",
+      "client_token": "replace-with-client-token"
     }
   ]
 }

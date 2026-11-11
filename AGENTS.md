@@ -15,7 +15,8 @@ transport.
 - Preserve the migrated behavior unless a behavior change is explicitly
   requested. Do not add inbound messaging, persistence, cancellation, new
   platforms, or admin endpoints on your own.
-- Each account's `access_token` is its only client credential. Do not
+- Each account's `client_token` is its only gateway credential. Keep
+  `access_token` private to the gateway and upstream driver; do not
   reintroduce a global gateway access key.
 - Keep responsibilities separated:
   - `internal/config`: environment and `accounts.json` loading and validation;

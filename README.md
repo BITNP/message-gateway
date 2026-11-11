@@ -39,22 +39,22 @@ Ordinary actions are proxied to the account driver and returned unchanged:
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/accounts/qq/get_login_info \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
-The account's `access_token` is also a scoped client token for that URL:
+The account's `client_token` is the scoped credential for that URL:
 
 ```bash
-curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_ACCOUNT_TOKEN"
+curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_CLIENT_TOKEN"
 ```
 
 Delivery status is account-scoped:
 
 ```bash
 curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN"
 ```
 
 In Stage 1, `send_private_msg`, `send_group_msg`, and `send_msg` on the account
@@ -69,25 +69,26 @@ cp accounts.example.json accounts.json
 # Edit accounts.json so each address points at a reachable OneBot service.
 
 export MESSAGE_ACCOUNTS_FILE=./accounts.json
-# Use the account's access_token as the bearer token.
-export QQ_ACCOUNT_TOKEN=replace-with-account-access-token
+# Use the account's client_token as the bearer token.
+export QQ_CLIENT_TOKEN=replace-with-client-token
 go run ./cmd/message-gateway
 ```
 
-The gateway listens on `:8081` by default. Account definitions and per-account
-access tokens live only in `accounts.json`; there is no global gateway key. The
-gateway does not read `NAPCAT_BASE_URL` or `NAPCAT_ACCESS_TOKEN`. Compose uses
-`http://napcat:3001` in the example file.
+The gateway listens on `:8081` by default. Account definitions, NapCat
+`access_token` values, and gateway `client_token` values live in
+`accounts.json`; there is no global gateway key. The gateway does not read
+`NAPCAT_BASE_URL` or `NAPCAT_ACCESS_TOKEN`. Compose uses `http://napcat:3001`
+in the example file.
 
 ```bash
 curl http://127.0.0.1:8081/healthz
 
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
 
-websocat -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+websocat -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   ws://127.0.0.1:8081/api/v1/ws
 ```
 
@@ -107,13 +108,15 @@ independent and get their own client, queue, and pacing.
       "name": "qq",
       "driver": "napcat",
       "address": "http://napcat:3001",
-      "access_token": "replace-with-napcat-token"
+      "access_token": "replace-with-napcat-token",
+      "client_token": "replace-with-client-token"
     },
     {
       "name": "qq-backup",
       "driver": "napcat",
       "address": "http://napcat-backup:3001",
-      "access_token": "replace-with-backup-token"
+      "access_token": "replace-with-backup-token",
+      "client_token": "replace-with-backup-client-token"
     }
   ]
 }
@@ -124,7 +127,8 @@ independent and get their own client, queue, and pacing.
 | `name` | yes | Unique account name, `^[a-z0-9][a-z0-9_-]{0,31}$`. Clients send it in `platform`; delivery ids use it as a prefix. |
 | `driver` | yes | `napcat` (currently the only implemented driver). |
 | `address` | yes | Base URL of the OneBot HTTP service, `http` or `https`. |
-| `access_token` | yes for `napcat` | Bearer token for the OneBot HTTP server. Copy the token configured in NapCat. |
+| `access_token` | yes for `napcat` | Upstream bearer token for the OneBot HTTP server. Copy the token configured in NapCat. It is never accepted as a gateway credential. |
+| `client_token` | yes | Gateway credential for this account. Required, must differ from `access_token`. Generate with `openssl rand -hex 32`. |
 | `timeout` | no | Per-request timeout for queued sends, default `10s`. |
 | `proxy_timeout` | no | Driver response-header timeout for pass-through requests, default `30s`. |
 | `directory_refresh` | no | Friend/group directory refresh interval, default `30m`. |
@@ -147,8 +151,9 @@ a sample NapCat stack is provided in `docker-compose.napcat.yml`.
 cp .env.example .env
 cp accounts.example.json accounts.json
 chmod 600 .env
-# Edit accounts.json so each address points at a OneBot service and each
-# access_token is set. Account tokens are the only client credentials.
+# Edit accounts.json so each address points at a OneBot service, each
+# access_token is the NapCat token, and each client_token is the gateway
+# credential.
 
 docker compose up -d --build
 docker compose logs -f message-gateway
@@ -192,7 +197,9 @@ Then configure NapCat:
    `3001`.
 4. Put the OneBot HTTP token from NapCat into the account's `access_token`
    field. The gateway requires it for `napcat` accounts.
-5. Set the account address to `http://napcat:3001` when using the sample stack.
+5. Generate a separate `client_token` for gateway clients, for example with
+   `openssl rand -hex 32`.
+6. Set the account address to `http://napcat:3001` when using the sample stack.
 
 To run the gateway against an existing NapCat, set that entry's `address` in
 `accounts.json` and do not start the sample stack.
@@ -224,7 +231,8 @@ It listens on `:3001` by default. Keep this terminal running.
 **Create `accounts.json`:**
 
 The gateway requires a non-empty `access_token` for `napcat`. Use the same value
-as the fake server's `-token`.
+as the fake server's `-token`. Add a distinct `client_token` for gateway
+clients.
 
 ```bash
 cd /home/potato/Projects/clinic/message-gateway
@@ -235,7 +243,8 @@ cat > accounts.json <<'EOF'
       "name": "qq",
       "driver": "napcat",
       "address": "http://127.0.0.1:3001",
-      "access_token": "local-token"
+      "access_token": "local-token",
+      "client_token": "local-client-token"
     }
   ]
 }
@@ -250,8 +259,8 @@ chmod 600 accounts.json
 ```bash
 cd /home/potato/Projects/clinic/message-gateway
 export MESSAGE_ACCOUNTS_FILE=./accounts.json
-# The account access_token from accounts.json is the client token.
-export QQ_ACCOUNT_TOKEN=local-token
+# The client_token from accounts.json is the gateway credential.
+export QQ_CLIENT_TOKEN=local-client-token
 go run ./cmd/message-gateway
 ```
 
@@ -262,7 +271,7 @@ message-gateway listening on :8081 (accounts qq)
 ```
 
 The gateway does not load `.env` automatically; export `MESSAGE_ACCOUNTS_FILE`
-before starting it. `QQ_ACCOUNT_TOKEN` is only used by the curl examples.
+before starting it. `QQ_CLIENT_TOKEN` is only used by the curl examples.
 
 **Send a private message:**
 
@@ -370,7 +379,10 @@ Expected frames:
   `accounts.json`.
 - Startup error `access_token is required for napcat` — add a non-empty
   `access_token`.
-- Delivery fails with `401` — the account token does not match the fake’s
+- Startup error `client_token is required` — add a gateway client token.
+- Startup error `client_token must differ from access_token` — generate a
+  separate client token, for example with `openssl rand -hex 32`.
+- Delivery fails with `401` — the `access_token` does not match the fake’s
   `-token`.
 - `202` but nothing arrives — check `curl http://127.0.0.1:3001/_messages` and
   the gateway logs.
@@ -388,8 +400,8 @@ cp .env.example .env
 
 cp accounts.example.json accounts.json
 # keep the address as http://napcat:3001
-# set a non-empty access_token; the Compose fake has no token configured and
-# ignores the Authorization header
+# set a non-empty access_token and a distinct client_token; the Compose fake
+# has no token configured and ignores the Authorization header
 ```
 
 The gateway network must exist before the fake stack starts:
@@ -460,7 +472,7 @@ MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
 # MESSAGE_GATEWAY_URL=http://message-gateway:8081
 
 MESSAGE_GATEWAY_ACCOUNT=qq
-MESSAGE_GATEWAY_ACCOUNT_TOKEN=<the account's access_token from accounts.json>
+MESSAGE_GATEWAY_ACCOUNT_TOKEN=<the account's client_token from accounts.json>
 MESSAGE_GATEWAY_TIMEOUT=5s
 ```
 
@@ -475,7 +487,7 @@ testing without QQ.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
-| `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts and their access tokens. |
+| `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts and their access/client tokens. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
 | `MESSAGE_QUEUE_SIZE` | `100` | Per-account queue capacity. |
@@ -489,9 +501,9 @@ testing without QQ.
 | `MESSAGE_GAP_JITTER` | `1s` | Random extra gap in `[0, jitter)`. |
 | `MESSAGE_GAP_MIN` | `1s` | Lower bound for any gap. |
 
-Account-specific settings (`access_token`, `timeout`, `directory_refresh`,
-`directory_retry`, `directory_timeout`, `group_temp_session`) live in
-`accounts.json`; see [Accounts](#accounts).
+Account-specific settings (`access_token`, `client_token`, `timeout`,
+`proxy_timeout`, `directory_refresh`, `directory_retry`, `directory_timeout`,
+`group_temp_session`) live in `accounts.json`; see [Accounts](#accounts).
 
 Gap calculation:
 
@@ -545,9 +557,9 @@ Used only by `docker-compose.napcat.yml`.
 
 ## Troubleshooting
 
-- **`401 Unauthorized`**: no account token was supplied.
-- **`403 Forbidden`**: the token is invalid or belongs to another account.
-  Use the `access_token` of the account named in the request.
+- **`401 Unauthorized`**: no client token was supplied.
+- **`403 Forbidden`**: the client token is invalid or belongs to another
+  account. Use the `client_token` of the account named in the request.
 - **`429 Too Many Requests`**: the account queue is full. Clients can retry
   after the `Retry-After` interval.
 - **`202` but no message arrives**: check `docker compose logs message-gateway`

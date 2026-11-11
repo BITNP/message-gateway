@@ -5,29 +5,31 @@ HTTP and WebSocket API for `message-gateway`. The server listens on `HTTP_ADDR`
 
 ## Authentication
 
-There is no global gateway access key. Every account has one token, its
-`access_token` in `accounts.json`, and that token is the only credential for
-that account.
+There is no global gateway access key. Every account has a separate
+`client_token` in `accounts.json`. That token is the only credential for the
+account's gateway API.
 
-Account-scoped requests require the account's token:
+Account-scoped requests require the account's client token:
 
 ```http
-Authorization: Bearer <account access_token>
+Authorization: Bearer <account client_token>
 ```
 
-They also accept OneBot 11's query form:
+They also accept OneBot 11's query form. The parameter is named `access_token`
+for protocol compatibility, but its value must be the account's
+`client_token`:
 
 ```http
-POST /api/v1/accounts/qq/get_login_info?access_token=<account access_token>
+POST /api/v1/accounts/qq/get_login_info?access_token=<account client_token>
 ```
 
 The header wins when both are present. The query parameter is stripped before
 the request is forwarded to the driver and is never sent upstream. Missing
 tokens receive `401 Unauthorized`; invalid tokens and tokens for another
-account receive `403 Forbidden`. Tokens are stored as SHA-256 hashes.
+account receive `403 Forbidden`. Client tokens are stored as SHA-256 hashes.
 
-The legacy endpoints also require an account token, supplied by the same
-header or query parameter. They are scoped by the account named in the request:
+The legacy endpoints also require a client token, supplied by the same header
+or query parameter. They are scoped by the account named in the request:
 
 - `POST /api/v1/messages` requires the token of the account in `platform`.
 - `GET /api/v1/messages/{id}` requires the token of the account that owns the
@@ -52,15 +54,23 @@ WeChat account identity.
       "name": "qq",
       "driver": "napcat",
       "address": "http://napcat:3001",
-      "access_token": "replace-with-napcat-token"
+      "access_token": "replace-with-napcat-token",
+      "client_token": "replace-with-client-token"
     }
   ]
 }
 ```
 
-`access_token` is required for `napcat` accounts; it is sent as a bearer token
-to the OneBot service. Keep `accounts.json` out of version control and restrict
-its permissions when it contains a token.
+`access_token` is the bearer token the gateway sends to the OneBot service. It
+is private to the gateway and is never accepted as a gateway credential.
+It is required for `napcat` accounts.
+
+`client_token` is the token clients use to authenticate to that account's
+gateway URL and delivery status. It is required and must differ from
+`access_token`. Generate one with `openssl rand -hex 32`.
+
+Keep `accounts.json` out of version control and restrict its permissions
+because it contains both secrets.
 
 The account `name` is the path segment of the account's OneBot 11 base URL:
 
@@ -70,10 +80,6 @@ http://message-gateway:8081/api/v1/accounts/qq
 
 It is also the value legacy clients send in the `platform` field and the prefix
 of delivery ids. The field is required.
-
-`access_token` has two roles: it is the bearer token the gateway sends to the
-driver, and it is the scoped client token for that account's gateway URL. Treat
-it as a secret.
 
 The optional `proxy_timeout` field bounds how long the gateway waits for the
 driver's response headers on pass-through requests. It defaults to `30s` and
@@ -200,13 +206,13 @@ Account-scoped errors use the OneBot envelope:
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/accounts/qq/get_login_info \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
 ```bash
-curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_ACCOUNT_TOKEN"
+curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_CLIENT_TOKEN"
 ```
 
 ### `GET /api/v1/accounts/{account}/message-status/{delivery_id}`
@@ -246,13 +252,13 @@ The response body is the same as the legacy status endpoint:
 
 ```bash
 curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN"
 ```
 
 ## Legacy endpoints
 
 The endpoints below remain temporarily while consumers migrate. They require
-an account token and are scoped to that token's account or accounts. They will
+a client token and are scoped to that token's account or accounts. They will
 be removed in a later stage.
 
 ### `POST /api/v1/messages` (legacy)
@@ -303,7 +309,7 @@ large), `429` (queue full), `503` (gateway shutting down).
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
 ```
@@ -312,7 +318,7 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"group","id":"20002"},"text":"group hello"}'
 ```
@@ -384,13 +390,13 @@ token must own the delivery; other deliveries are reported as unknown.
 
 ```bash
 curl http://127.0.0.1:8081/api/v1/messages/qq-1 \
-  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
+  -H "Authorization: Bearer $QQ_CLIENT_TOKEN"
 ```
 
 ### `GET /api/v1/ws` (legacy)
 
 WebSocket transport for sending messages with per-message delivery feedback.
-It uses the same account token as the HTTP endpoints, either as an
+It uses the same client token as the HTTP endpoints, either as an
 `Authorization: Bearer` header or as an `access_token` query parameter.
 The endpoint is intended for service-to-service use, not for browsers.
 
@@ -400,7 +406,7 @@ Requests can be pipelined: many messages may be in flight on one connection.
 **Handshake**
 
 ```bash
-websocat -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+websocat -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   ws://127.0.0.1:8081/api/v1/ws
 ```
 
@@ -414,7 +420,7 @@ Immediately after the upgrade the server sends:
 }
 ```
 
-`accounts` lists only the accounts allowed by the presented account token.
+`accounts` lists only the accounts allowed by the presented client token.
 
 **Client frames**
 
@@ -566,6 +572,6 @@ once they are enabled. In Stage 1, message-send actions on
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | Address the HTTP API and legacy WebSocket endpoint listen on. |
-| `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. Each account's `access_token` is its only client token. |
+| `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. `access_token` is the upstream token; `client_token` is the gateway credential. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent legacy WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoints. |
