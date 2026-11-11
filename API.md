@@ -5,14 +5,36 @@ HTTP and WebSocket API for `message-gateway`. The server listens on `HTTP_ADDR`
 
 ## Authentication
 
-Every `/api/v1/*` endpoint requires a bearer token:
+There is no global gateway access key. Every account has one token, its
+`access_token` in `accounts.json`, and that token is the only credential for
+that account.
+
+Account-scoped requests require the account's token:
 
 ```http
-Authorization: Bearer <MESSAGE_GATEWAY_API_KEY>
+Authorization: Bearer <account access_token>
 ```
 
-`MESSAGE_GATEWAY_API_KEY` is required at startup. Missing or invalid tokens
-receive `401 Unauthorized`. The token is compared in constant time.
+They also accept OneBot 11's query form:
+
+```http
+POST /api/v1/accounts/qq/get_login_info?access_token=<account access_token>
+```
+
+The header wins when both are present. The query parameter is stripped before
+the request is forwarded to the driver and is never sent upstream. Missing
+tokens receive `401 Unauthorized`; invalid tokens and tokens for another
+account receive `403 Forbidden`. Tokens are stored as SHA-256 hashes.
+
+The legacy endpoints also require an account token, supplied by the same
+header or query parameter. They are scoped by the account named in the request:
+
+- `POST /api/v1/messages` requires the token of the account in `platform`.
+- `GET /api/v1/messages/{id}` requires the token of the account that owns the
+  delivery.
+- `GET /api/v1/ws` scopes the connection to the accounts allowed by the token.
+  The `ready` frame lists only those accounts, and a `send` frame for another
+  account receives a `forbidden` error.
 
 `GET /healthz` is public.
 
@@ -40,28 +62,53 @@ WeChat account identity.
 to the OneBot service. Keep `accounts.json` out of version control and restrict
 its permissions when it contains a token.
 
-The account `name` is the value clients send in the `platform` field. It is
-also the prefix of delivery ids. The field is required.
+The account `name` is the path segment of the account's OneBot 11 base URL:
+
+```text
+http://message-gateway:8081/api/v1/accounts/qq
+```
+
+It is also the value legacy clients send in the `platform` field and the prefix
+of delivery ids. The field is required.
+
+`access_token` has two roles: it is the bearer token the gateway sends to the
+driver, and it is the scoped client token for that account's gateway URL. Treat
+it as a secret.
+
+The optional `proxy_timeout` field bounds how long the gateway waits for the
+driver's response headers on pass-through requests. It defaults to `30s` and
+does not apply to queued sends.
 
 ## Errors
 
-All errors share one shape:
+Legacy and control-plane endpoints use:
 
 ```json
 { "error": "human-readable message" }
 ```
 
+Account-scoped endpoints use the OneBot 11 envelope:
+
+```json
+{ "status": "failed", "retcode": 1404, "data": null, "message": "unknown account" }
+```
+
+The shared status codes are:
+
 | Status | Meaning |
 | --- | --- |
-| `400 Bad Request` | Malformed JSON, missing required field, invalid field value, or unknown account |
-| `401 Unauthorized` | Missing or invalid bearer token |
+| `400 Bad Request` | Malformed JSON, missing required field, invalid field value, or invalid path |
+| `401 Unauthorized` | Missing token |
+| `403 Forbidden` | Invalid token or a token for another account |
 | `413 Request Entity Too Large` | Request body exceeds 1 MiB |
 | `429 Too Many Requests` | The account's queue is full. Retry after `Retry-After: 1`. |
-| `404 Not Found` | Unknown delivery id on the status query endpoint. Other unmatched routes return a plain-text `404`. |
+| `404 Not Found` | Unknown account or delivery id |
+| `501 Not Implemented` | Reserved account-scoped message-send action in Stage 1 |
+| `502 Bad Gateway` | The driver could not be reached |
 | `503 Service Unavailable` | The gateway is shutting down |
 | `500 Internal Server Error` | Unexpected server error |
 
-Examples:
+Legacy examples:
 
 ```json
 { "error": "unauthorized" }
@@ -87,7 +134,128 @@ process is running; it does not check NapCat connectivity or directory state.
 curl http://127.0.0.1:8081/healthz
 ```
 
-### `POST /api/v1/messages`
+### `ANY /api/v1/accounts/{account}/{action...}`
+
+Proxies one OneBot 11 HTTP action to the configured account driver, such as
+NapCat. The driver's HTTP status, headers, and body are returned unchanged.
+
+**Path parameters**
+
+| Parameter | Description |
+| --- | --- |
+| `account` | Configured account name from `accounts.json`. |
+| `action` | OneBot 11 action name, for example `get_login_info` or `get_group_list`. |
+
+**Request**
+
+The gateway accepts the same request forms as OneBot 11:
+
+- `POST` with `application/json`;
+- `POST` with `application/x-www-form-urlencoded`;
+- `GET` with query parameters.
+
+The action path is appended to the account's configured `address`. The gateway
+replaces the client `Authorization` header with the account's `access_token`
+and removes any `access_token` query parameter before forwarding. All other
+end-to-end request headers, the method, the body, and the query string are
+preserved.
+
+**Response**
+
+Whatever the driver returns. For example:
+
+```json
+{
+  "status": "ok",
+  "retcode": 0,
+  "data": { "user_id": 10000, "nickname": "clinic bot" }
+}
+```
+
+**Message-send actions**
+
+`send_private_msg`, `send_group_msg`, `send_msg`, and their `_async` and
+`_rate_limited` variants are reserved. In Stage 1 they return
+`501 Not Implemented` and are not forwarded. They will be queued in the next
+stage.
+
+**Error responses**
+
+| Status | Meaning |
+| --- | --- |
+| `401 Unauthorized` | No token was supplied. |
+| `403 Forbidden` | The token is invalid or belongs to another account. |
+| `404 Not Found` | Unknown account. |
+| `400 Bad Request` | Invalid path or dot segments. |
+| `501 Not Implemented` | Reserved message-send action. |
+| `502 Bad Gateway` | The driver could not be reached or returned an invalid response. |
+
+Account-scoped errors use the OneBot envelope:
+
+```json
+{ "status": "failed", "retcode": 1404, "data": null, "message": "unknown account" }
+```
+
+**curl**
+
+```bash
+curl -X POST http://127.0.0.1:8081/api/v1/accounts/qq/get_login_info \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```bash
+curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_ACCOUNT_TOKEN"
+```
+
+### `GET /api/v1/accounts/{account}/message-status/{delivery_id}`
+
+Reports the latest delivery state for one message owned by `account`. The
+`delivery_id` is the id returned by a queued send or by the legacy send API.
+
+The caller must present that account's token. A delivery that belongs to
+another account is reported as unknown. Only
+`GET` is allowed; other methods return `405 Method Not Allowed`.
+
+The response body is the same as the legacy status endpoint:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Delivery id. |
+| `status` | string | `queued`, `retrying`, `sent`, or `failed`. |
+| `attempts` | number | Completed send attempts. Present except for `queued`. |
+| `error` | string | Last send error. Present for `retrying` and `failed`. |
+| `retry_in_ms` | number | Delay before the next attempt. Only for `retrying`. |
+| `reason` | string | `permanent` or `exhausted`. Only for `failed`. |
+| `receipt` | object | `{ "message_id", "sent_at" }`. Only for `sent`. |
+
+```json
+{ "id": "qq-1", "status": "queued" }
+```
+
+**Error responses**
+
+| Status | Meaning |
+| --- | --- |
+| `401 Unauthorized` | No token was supplied. |
+| `403 Forbidden` | The token is invalid or belongs to another account. |
+| `404 Not Found` | Unknown account, unknown delivery, or a delivery owned by another account. |
+
+**curl**
+
+```bash
+curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
+```
+
+## Legacy endpoints
+
+The endpoints below remain temporarily while consumers migrate. They require
+an account token and are scoped to that token's account or accounts. They will
+be removed in a later stage.
+
+### `POST /api/v1/messages` (legacy)
 
 Enqueues an outbound message. The handler validates the request and returns
 immediately; delivery happens asynchronously through the account's FIFO queue.
@@ -101,8 +269,8 @@ immediately; delivery happens asynchronously through the account's FIFO queue.
 | `target.id` | string | yes | Target id on the account's platform, kept as a string. |
 | `text` | string | yes | Message text. Must be non-blank. |
 
-The account named in `platform` selects the account and its queue. The request
-body is limited to 1 MiB.
+The account named in `platform` selects the account and its queue. The bearer
+token must belong to that account. The request body is limited to 1 MiB.
 
 ```json
 {
@@ -127,14 +295,15 @@ body is limited to 1 MiB.
 NapCat delivered it. Query the outcome with `GET /api/v1/messages/{id}` or the
 WebSocket endpoint. There is no cancellation endpoint.
 
-**Error responses:** `400` (malformed body or invalid field), `401` (bad token),
-`413` (body too large), `429` (queue full), `503` (gateway shutting down).
+**Error responses:** `400` (malformed body or invalid field), `401` (missing
+token), `403` (invalid token or a token for another account), `413` (body too
+large), `429` (queue full), `503` (gateway shutting down).
 
 **curl — private message**
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
 ```
@@ -143,12 +312,12 @@ curl -X POST http://127.0.0.1:8081/api/v1/messages \
 
 ```bash
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"group","id":"20002"},"text":"group hello"}'
 ```
 
-### `GET /api/v1/messages/{id}`
+### `GET /api/v1/messages/{id}` (legacy)
 
 Reports the latest known delivery state for one enqueued message. The `id` is
 the delivery id returned by `POST /api/v1/messages` or by a WebSocket `queued`
@@ -205,24 +374,25 @@ never enqueued in this process, was evicted, or predates a restart.
 ```
 
 As with the WebSocket frames, `sent` means NapCat accepted the message; it does
-not prove the recipient read it. `sent_at` is RFC 3339 in UTC.
+not prove the recipient read it. `sent_at` is RFC 3339 in UTC. The account
+token must own the delivery; other deliveries are reported as unknown.
 
-**Error responses:** `401` (bad token), `404` (`{ "error": "unknown delivery
-id" }`).
+**Error responses:** `401` (missing token), `403` (invalid token), `404`
+(`{ "error": "unknown delivery id" }`).
 
 **curl**
 
 ```bash
 curl http://127.0.0.1:8081/api/v1/messages/qq-1 \
-  -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY"
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
 ```
 
-### `GET /api/v1/ws`
+### `GET /api/v1/ws` (legacy)
 
 WebSocket transport for sending messages with per-message delivery feedback.
-It uses the same `Authorization: Bearer` header as the HTTP endpoints; there is
-no query-string token, so the endpoint is intended for service-to-service use,
-not for browsers.
+It uses the same account token as the HTTP endpoints, either as an
+`Authorization: Bearer` header or as an `access_token` query parameter.
+The endpoint is intended for service-to-service use, not for browsers.
 
 Clients send `send` frames and correlate replies with their own `request_id`.
 Requests can be pipelined: many messages may be in flight on one connection.
@@ -230,7 +400,7 @@ Requests can be pipelined: many messages may be in flight on one connection.
 **Handshake**
 
 ```bash
-websocat -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+websocat -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
   ws://127.0.0.1:8081/api/v1/ws
 ```
 
@@ -244,7 +414,7 @@ Immediately after the upgrade the server sends:
 }
 ```
 
-`accounts` lists every configured account.
+`accounts` lists only the accounts allowed by the presented account token.
 
 **Client frames**
 
@@ -252,7 +422,7 @@ Immediately after the upgrade the server sends:
 | --- | --- | --- | --- |
 | `type` | string | yes | `send` |
 | `request_id` | string | no | Echoed on every frame that answers this request |
-| `platform` | string | yes | Configured account name. Same values as the HTTP request body |
+| `platform` | string | yes | Configured account name allowed by the connection token. Same values as the HTTP request body |
 | `target.kind` | string | yes | `user` or `group` |
 | `target.id` | string | yes | Target id on the account's platform, kept as a string |
 | `text` | string | yes | Message text. Must be non-blank. |
@@ -321,8 +491,10 @@ Immediately after the upgrade the server sends:
 }
 ```
 
-`error` — `code` is `bad_request`, `queue_full`, `service_unavailable`, or
-`internal`. `retry_after_ms` is only set for `queue_full`.
+`error` — `code` is `bad_request`, `forbidden`, `queue_full`,
+`service_unavailable`, or `internal`. `retry_after_ms` is only set for
+`queue_full`. A `platform` outside the connection token's scope receives
+`forbidden`.
 
 ```json
 {
@@ -368,6 +540,10 @@ process, not across restarts.
 
 ## Queue semantics
 
+These semantics apply to the legacy send API now and to account-scoped sends
+once they are enabled. In Stage 1, message-send actions on
+`/api/v1/accounts/{account}/...` return `501`.
+
 - Each account has one bounded FIFO queue (`MESSAGE_QUEUE_SIZE`, default `100`).
   HTTP requests and every WebSocket connection feed the same queue.
 - The queue is in-memory. Pending messages are lost when the gateway restarts.
@@ -389,8 +565,7 @@ process, not across restarts.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HTTP_ADDR` | `:8081` | Address the HTTP API and WebSocket endpoint listen on. |
-| `MESSAGE_GATEWAY_API_KEY` | — (required) | Bearer token for `/api/v1/*`. |
-| `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. |
-| `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
-| `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
+| `HTTP_ADDR` | `:8081` | Address the HTTP API and legacy WebSocket endpoint listen on. |
+| `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. Each account's `access_token` is its only client token. |
+| `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent legacy WebSocket connections. |
+| `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoints. |

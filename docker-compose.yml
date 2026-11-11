@@ -14,7 +14,6 @@ services:
       - .env
     environment:
       HTTP_ADDR: ":8081"
-      MESSAGE_GATEWAY_API_KEY: "${MESSAGE_GATEWAY_API_KEY:?set MESSAGE_GATEWAY_API_KEY in .env}"
       MESSAGE_ACCOUNTS_FILE: "/etc/message-gateway/accounts.json"
     volumes:
       - "./accounts.json:/etc/message-gateway/accounts.json:ro"

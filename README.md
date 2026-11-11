@@ -7,7 +7,12 @@ the HTTP and WebSocket APIs. It was extracted from
 
 ## Features
 
-- Bearer-authenticated `POST /api/v1/messages` for private or group QQ messages.
+- Account-scoped OneBot 11 base URLs at `/api/v1/accounts/{account}` with
+  pass-through for ordinary actions and per-account token auth.
+- Account-scoped delivery status at
+  `/api/v1/accounts/{account}/message-status/{delivery_id}`.
+- Legacy bearer-authenticated `POST /api/v1/messages` for private or group QQ
+  messages.
 - Bearer-authenticated `GET /api/v1/ws` that reports `queued`, `retrying`,
   `sent`, and `failed` for each message, with pipelined requests.
 - Bearer-authenticated `GET /api/v1/messages/{id}` that reports the latest
@@ -21,31 +26,68 @@ the HTTP and WebSocket APIs. It was extracted from
 - Dev-only fake NapCat for testing without a QQ account.
 - One Go dependency (`github.com/coder/websocket`); no cgo.
 
+## Account-scoped OneBot API (Stage 1)
+
+The new API gives each configured account one OneBot 11 base URL:
+
+```text
+http://message-gateway:8081/api/v1/accounts/qq
+http://message-gateway:8081/api/v1/accounts/qq-backup
+```
+
+Ordinary actions are proxied to the account driver and returned unchanged:
+
+```bash
+curl -X POST http://127.0.0.1:8081/api/v1/accounts/qq/get_login_info \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+The account's `access_token` is also a scoped client token for that URL:
+
+```bash
+curl "http://127.0.0.1:8081/api/v1/accounts/qq/get_group_list?group_id=20001&access_token=$QQ_ACCOUNT_TOKEN"
+```
+
+Delivery status is account-scoped:
+
+```bash
+curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN"
+```
+
+In Stage 1, `send_private_msg`, `send_group_msg`, and `send_msg` on the account
+URL return `501`; queueing them is the next stage. The legacy
+`POST /api/v1/messages` and `GET /api/v1/ws` endpoints still work and remain
+documented below.
+
 ## Local binary
 
 ```bash
 cp accounts.example.json accounts.json
 # Edit accounts.json so each address points at a reachable OneBot service.
 
-export MESSAGE_GATEWAY_API_KEY="$(openssl rand -hex 32)"
 export MESSAGE_ACCOUNTS_FILE=./accounts.json
+# Use the account's access_token as the bearer token.
+export QQ_ACCOUNT_TOKEN=replace-with-account-access-token
 go run ./cmd/message-gateway
 ```
 
 The gateway listens on `:8081` by default. Account definitions and per-account
-bearer tokens live only in `accounts.json`; the gateway no longer reads
-`NAPCAT_BASE_URL` or `NAPCAT_ACCESS_TOKEN`. Compose uses
+access tokens live only in `accounts.json`; there is no global gateway key. The
+gateway does not read `NAPCAT_BASE_URL` or `NAPCAT_ACCESS_TOKEN`. Compose uses
 `http://napcat:3001` in the example file.
 
 ```bash
 curl http://127.0.0.1:8081/healthz
 
 curl -X POST http://127.0.0.1:8081/api/v1/messages \
-  -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+  -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
 
-websocat -H "Authorization: Bearer $MESSAGE_GATEWAY_API_KEY" \
+websocat -H "Authorization: Bearer $QQ_ACCOUNT_TOKEN" \
   ws://127.0.0.1:8081/api/v1/ws
 ```
 
@@ -83,7 +125,8 @@ independent and get their own client, queue, and pacing.
 | `driver` | yes | `napcat` (currently the only implemented driver). |
 | `address` | yes | Base URL of the OneBot HTTP service, `http` or `https`. |
 | `access_token` | yes for `napcat` | Bearer token for the OneBot HTTP server. Copy the token configured in NapCat. |
-| `timeout` | no | Per-request timeout, default `10s`. |
+| `timeout` | no | Per-request timeout for queued sends, default `10s`. |
+| `proxy_timeout` | no | Driver response-header timeout for pass-through requests, default `30s`. |
 | `directory_refresh` | no | Friend/group directory refresh interval, default `30m`. |
 | `directory_retry` | no | Initial directory sync retry interval, default `5s`. |
 | `directory_timeout` | no | One directory sync timeout, default `60s`. |
@@ -104,9 +147,8 @@ a sample NapCat stack is provided in `docker-compose.napcat.yml`.
 cp .env.example .env
 cp accounts.example.json accounts.json
 chmod 600 .env
-# Edit .env and set MESSAGE_GATEWAY_API_KEY, for example:
-#   openssl rand -hex 32
-# Edit accounts.json so each address points at a OneBot service.
+# Edit accounts.json so each address points at a OneBot service and each
+# access_token is set. Account tokens are the only client credentials.
 
 docker compose up -d --build
 docker compose logs -f message-gateway
@@ -207,8 +249,9 @@ chmod 600 accounts.json
 
 ```bash
 cd /home/potato/Projects/clinic/message-gateway
-export MESSAGE_GATEWAY_API_KEY=test-key
 export MESSAGE_ACCOUNTS_FILE=./accounts.json
+# The account access_token from accounts.json is the client token.
+export QQ_ACCOUNT_TOKEN=local-token
 go run ./cmd/message-gateway
 ```
 
@@ -218,7 +261,8 @@ Expected log:
 message-gateway listening on :8081 (accounts qq)
 ```
 
-The gateway does not load `.env` automatically; the exports matter.
+The gateway does not load `.env` automatically; export `MESSAGE_ACCOUNTS_FILE`
+before starting it. `QQ_ACCOUNT_TOKEN` is only used by the curl examples.
 
 **Send a private message:**
 
@@ -341,7 +385,6 @@ Create the account file first; Compose mounts it into the gateway:
 
 ```bash
 cp .env.example .env
-# set MESSAGE_GATEWAY_API_KEY=test-key in .env
 
 cp accounts.example.json accounts.json
 # keep the address as http://napcat:3001
@@ -416,24 +459,23 @@ MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
 # Inside Compose:
 # MESSAGE_GATEWAY_URL=http://message-gateway:8081
 
-MESSAGE_GATEWAY_API_KEY=<same key as message-gateway/.env>
+MESSAGE_GATEWAY_ACCOUNT=qq
+MESSAGE_GATEWAY_ACCOUNT_TOKEN=<the account's access_token from accounts.json>
 MESSAGE_GATEWAY_TIMEOUT=5s
 ```
 
 Keep `NAPCAT_BASE_URL` empty in the backend so the legacy in-process manager
 stays disabled. `clinic-backend/scripts/dev.sh` starts the gateway stack
-automatically and reads `MESSAGE_GATEWAY_API_KEY` from
-`../message-gateway/.env`. It does not start NapCat; run the sample stack
-separately if you need it locally, or use
-`clinic-backend/scripts/dev.sh --fake-napcat` for testing without QQ.
+automatically. It does not start NapCat; run the sample stack separately if
+you need it locally, or use `clinic-backend/scripts/dev.sh --fake-napcat` for
+testing without QQ.
 
 ## Configuration
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
-| `MESSAGE_GATEWAY_API_KEY` | required | Bearer token for `/api/v1/*`. Use the same value in the backend. |
-| `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts. |
+| `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts and their access tokens. |
 | `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
 | `MESSAGE_QUEUE_SIZE` | `100` | Per-account queue capacity. |
@@ -503,8 +545,9 @@ Used only by `docker-compose.napcat.yml`.
 
 ## Troubleshooting
 
-- **`401 Unauthorized`**: the backend token does not match
-  `MESSAGE_GATEWAY_API_KEY`.
+- **`401 Unauthorized`**: no account token was supplied.
+- **`403 Forbidden`**: the token is invalid or belongs to another account.
+  Use the `access_token` of the account named in the request.
 - **`429 Too Many Requests`**: the account queue is full. Clients can retry
   after the `Retry-After` interval.
 - **`202` but no message arrives**: check `docker compose logs message-gateway`
@@ -558,7 +601,7 @@ it on the server, then start the stack with `--no-build`.
 
 The gateway is ready for outbound text messaging with multiple configured
 NapCat accounts. The next integration step is to wire backend business callers
-to `MESSAGE_GATEWAY_URL` and `MESSAGE_GATEWAY_API_KEY`, then remove the frozen
+to `MESSAGE_GATEWAY_URL` with per-account tokens, then remove the frozen
 `clinic-backend/internal/message` copy once nothing depends on it.
 
 Hot reload, persistent queues, cancellation, replay across reconnects, inbound

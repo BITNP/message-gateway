@@ -13,8 +13,10 @@ transport.
   change as any route, request/response field, status code, authentication, or
   supported-value change.
 - Preserve the migrated behavior unless a behavior change is explicitly
-  requested. Do not add inbound messaging, persistence, delivery
-  status/cancellation, new platforms, or admin endpoints on your own.
+  requested. Do not add inbound messaging, persistence, cancellation, new
+  platforms, or admin endpoints on your own.
+- Each account's `access_token` is its only client credential. Do not
+  reintroduce a global gateway access key.
 - Keep responsibilities separated:
   - `internal/config`: environment and `accounts.json` loading and validation;
   - `internal/accounts`: per-account sender construction and registry;
