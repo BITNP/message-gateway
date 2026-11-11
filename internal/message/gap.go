@@ -1,6 +1,7 @@
 package message
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -68,7 +69,26 @@ func NewLengthGap(base, perRune, jitter time.Duration) (LengthGap, error) {
 
 // Gap implements GapPolicy.
 func (g LengthGap) Gap(msg Message) time.Duration {
-	runes := utf8.RuneCountInString(msg.Text)
+	text := msg.Text
+	if len(msg.Content) > 0 {
+		if json.Unmarshal(msg.Content, &text) != nil {
+			var segments []struct {
+				Type string `json:"type"`
+				Data struct {
+					Text string `json:"text"`
+				} `json:"data"`
+			}
+			text = ""
+			if json.Unmarshal(msg.Content, &segments) == nil {
+				for _, segment := range segments {
+					if segment.Type == "text" {
+						text += segment.Data.Text
+					}
+				}
+			}
+		}
+	}
+	runes := utf8.RuneCountInString(text)
 	return g.Base + time.Duration(runes)*g.PerRune + jitter(g.Jitter)
 }
 

@@ -109,7 +109,7 @@ The shared status codes are:
 | `413 Request Entity Too Large` | Request body exceeds 1 MiB |
 | `429 Too Many Requests` | The account's queue is full. Retry after `Retry-After: 1`. |
 | `404 Not Found` | Unknown account or delivery id |
-| `501 Not Implemented` | Reserved account-scoped message-send action in Stage 1 |
+| `504 Gateway Timeout` | A synchronous send is still pending after 30 seconds. |
 | `502 Bad Gateway` | The driver could not be reached |
 | `503 Service Unavailable` | The gateway is shutting down |
 | `500 Internal Server Error` | Unexpected server error |
@@ -181,9 +181,22 @@ Whatever the driver returns. For example:
 **Message-send actions**
 
 `send_private_msg`, `send_group_msg`, `send_msg`, and their `_async` and
-`_rate_limited` variants are reserved. In Stage 1 they return
-`501 Not Implemented` and are not forwarded. They will be queued in the next
-stage.
+`_rate_limited` variants enter the account queue. They accept a OneBot string
+or segment array as `message`, `auto_escape`, and the applicable numeric
+`user_id` and `group_id`. An explicit private `group_id` selects a temporary
+session. JSON, form and query requests are supported; form and query segment
+arrays are JSON encoded. Length-based pacing counts text segment characters.
+
+A normal or `_rate_limited` action waits up to 30 seconds for delivery and
+returns `{"status":"ok","retcode":0,"data":{"message_id":"123",
+"delivery_id":"qq-1"}}` on success. `delivery_id` is a gateway extension.
+On timeout the response is HTTP 504 with the delivery id in `data`; the send
+continues and can be queried using the status endpoint. Disconnecting after
+acceptance also does not cancel delivery.
+
+An `_async` action returns HTTP 202 with `status: "async"`, `retcode: 1` and
+`data.delivery_id`. This signals queue acceptance, not delivery. The status
+endpoint reports the result. A failed synchronous delivery returns HTTP 502.
 
 **Error responses**
 
@@ -193,7 +206,7 @@ stage.
 | `403 Forbidden` | The token is invalid or belongs to another account. |
 | `404 Not Found` | Unknown account. |
 | `400 Bad Request` | Invalid path or dot segments. |
-| `501 Not Implemented` | Reserved message-send action. |
+| `429 Too Many Requests` | Account queue is full. |
 | `502 Bad Gateway` | The driver could not be reached or returned an invalid response. |
 
 Account-scoped errors use the OneBot envelope:
@@ -233,7 +246,7 @@ The response body is the same as the legacy status endpoint:
 | `attempts` | number | Completed send attempts. Present except for `queued`. |
 | `error` | string | Last send error. Present for `retrying` and `failed`. |
 | `retry_in_ms` | number | Delay before the next attempt. Only for `retrying`. |
-| `reason` | string | `permanent` or `exhausted`. Only for `failed`. |
+| `reason` | string | `permanent`, `exhausted`, or `shutdown`. Only for `failed`; an interrupted in-flight send may have an unknown outcome. |
 | `receipt` | object | `{ "message_id", "sent_at" }`. Only for `sent`. |
 
 ```json
@@ -546,9 +559,7 @@ process, not across restarts.
 
 ## Queue semantics
 
-These semantics apply to the legacy send API now and to account-scoped sends
-once they are enabled. In Stage 1, message-send actions on
-`/api/v1/accounts/{account}/...` return `501`.
+These semantics apply to legacy and account-scoped sends.
 
 - Each account has one bounded FIFO queue (`MESSAGE_QUEUE_SIZE`, default `100`).
   HTTP requests and every WebSocket connection feed the same queue.

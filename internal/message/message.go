@@ -3,6 +3,7 @@
 package message
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,6 +56,12 @@ type Message struct {
 	Sender   string
 	Target   Target
 	Text     string
+	// Content carries a JSON string or array of message segments. When set it
+	// takes precedence over Text and is passed through to the driver unchanged.
+	Content    json.RawMessage
+	AutoEscape bool
+	// GroupID selects an explicit group temporary session for a private send.
+	GroupID string
 }
 
 // Receipt describes a successful send.
@@ -89,7 +96,17 @@ func (m Message) Validate() error {
 	if strings.TrimSpace(m.Target.ID) == "" {
 		return fmt.Errorf("%w: target id is required", ErrInvalidMessage)
 	}
-	if strings.TrimSpace(m.Text) == "" {
+	if len(m.Content) != 0 {
+		var text string
+		var segments []json.RawMessage
+		if json.Unmarshal(m.Content, &text) == nil {
+			if strings.TrimSpace(text) == "" {
+				return fmt.Errorf("%w: text is required", ErrInvalidMessage)
+			}
+		} else if json.Unmarshal(m.Content, &segments) != nil || len(segments) == 0 || strings.TrimSpace(string(m.Content)) == "null" {
+			return fmt.Errorf("%w: message must be a nonempty string or segment array", ErrInvalidMessage)
+		}
+	} else if strings.TrimSpace(m.Text) == "" {
 		return fmt.Errorf("%w: text is required", ErrInvalidMessage)
 	}
 	return nil

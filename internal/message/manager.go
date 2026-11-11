@@ -122,6 +122,8 @@ func (m *Manager) EnqueueObserved(
 	}
 
 	id := DeliveryID(fmt.Sprintf("%s-%d", msg.Sender, m.seq.Add(1)))
+	// The worker may run after the caller has reused its request buffer.
+	msg.Content = append([]byte(nil), msg.Content...)
 	delivery := &delivery{id: id, msg: msg, observe: observe}
 	if err := queue.push(ctx, delivery); err != nil {
 		return "", err
@@ -164,6 +166,9 @@ func (m *Manager) Run(ctx context.Context) {
 		queue.close()
 	}
 	wg.Wait()
+	for _, queue := range queues {
+		queue.failPending()
+	}
 }
 
 func waitTimer(ctx context.Context, delay time.Duration) bool {

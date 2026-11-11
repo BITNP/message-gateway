@@ -446,6 +446,9 @@ func (c *wsConn) writeDeliveryFrame(frame any) {
 }
 
 func failureReason(err error) string {
+	if errors.Is(err, message.ErrClosed) {
+		return "shutdown"
+	}
 	if errors.Is(err, message.ErrPermanent) {
 		return "permanent"
 	}

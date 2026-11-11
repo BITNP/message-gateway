@@ -18,8 +18,8 @@ const (
 //
 // Observers receive zero or more DeliveryRetrying updates followed by exactly
 // one terminal update, DeliverySent or DeliveryFailed. They are never called
-// for messages rejected at enqueue time, and messages still queued when the
-// manager shuts down are dropped without an update.
+// for messages rejected at enqueue time. Pending messages fail with ErrClosed
+// on shutdown; the outcome of an interrupted in-flight send is unknown.
 type DeliveryUpdate struct {
 	// ID is the delivery id returned by EnqueueObserved.
 	ID DeliveryID

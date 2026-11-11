@@ -35,12 +35,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isSendAction(action) {
-		writeOneBotError(
-			w,
-			http.StatusNotImplemented,
-			1500,
-			"message sending is not implemented on this endpoint yet",
-		)
+		s.handleOneBotSend(w, r, account, action)
 		return
 	}
 	if account.Proxy == nil {

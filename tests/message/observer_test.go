@@ -354,7 +354,7 @@ func TestEnqueueObservedNotCalledOnEnqueueError(t *testing.T) {
 	})
 }
 
-func TestEnqueueObservedNotCalledOnShutdown(t *testing.T) {
+func TestEnqueueObservedFailsOnShutdown(t *testing.T) {
 	mgr := mustManager(t, testConfig())
 	sender := newFakeSender()
 
@@ -391,8 +391,8 @@ func TestEnqueueObservedNotCalledOnShutdown(t *testing.T) {
 	}
 
 	// Run has returned, so no worker can still be emitting updates.
-	if updates := log.snapshot(); len(updates) != 0 {
-		t.Fatalf("updates after shutdown = %d, want 0", len(updates))
+	if updates := log.snapshot(); len(updates) != 1 || updates[0].State != message.DeliveryFailed || !errors.Is(updates[0].Err, message.ErrClosed) {
+		t.Fatalf("updates after shutdown = %+v, want failure with ErrClosed", updates)
 	}
 }
 

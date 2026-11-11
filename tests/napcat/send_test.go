@@ -305,3 +305,30 @@ func TestSendRejectsInvalidTarget(t *testing.T) {
 		t.Fatalf("send calls = %+v, want none", calls)
 	}
 }
+
+func TestSendPreservesSegmentsAndExplicitGroup(t *testing.T) {
+	var got struct {
+		UserID     int64           `json:"user_id"`
+		GroupID    int64           `json:"group_id"`
+		Message    json.RawMessage `json:"message"`
+		AutoEscape bool            `json:"auto_escape"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		writeOK(w, map[string]any{"message_id": 42})
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, true)
+	msg := userMessage("3", "")
+	msg.Content = json.RawMessage(`[{"type":"text","data":{"text":"hello"}},{"type":"image","data":{"file":"https://example.com/a.png"}}]`)
+	msg.GroupID = "10"
+	msg.AutoEscape = true
+	if _, err := client.Send(context.Background(), msg); err != nil {
+		t.Fatal(err)
+	}
+	if got.UserID != 3 || got.GroupID != 10 || !got.AutoEscape || string(got.Message) != string(msg.Content) {
+		t.Fatalf("unexpected request: %+v", got)
+	}
+}

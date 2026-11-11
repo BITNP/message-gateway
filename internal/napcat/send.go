@@ -2,6 +2,7 @@ package napcat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,14 +15,16 @@ import (
 var _ message.Sender = (*Client)(nil)
 
 type privateSendRequest struct {
-	UserID  int64  `json:"user_id"`
-	GroupID int64  `json:"group_id,omitempty"`
-	Message string `json:"message"`
+	UserID     int64 `json:"user_id"`
+	GroupID    int64 `json:"group_id,omitempty"`
+	Message    any   `json:"message"`
+	AutoEscape bool  `json:"auto_escape,omitempty"`
 }
 
 type groupSendRequest struct {
-	GroupID int64  `json:"group_id"`
-	Message string `json:"message"`
+	GroupID    int64 `json:"group_id"`
+	Message    any   `json:"message"`
+	AutoEscape bool  `json:"auto_escape,omitempty"`
 }
 
 // Send delivers msg through NapCat.
@@ -60,7 +63,7 @@ func (c *Client) sendGroup(ctx context.Context, msg message.Message) (message.Re
 	var data struct {
 		MessageID flexID `json:"message_id"`
 	}
-	params := groupSendRequest{GroupID: groupID, Message: msg.Text}
+	params := groupSendRequest{GroupID: groupID, Message: messageContent(msg), AutoEscape: msg.AutoEscape}
 	if err := c.call(ctx, "send_group_msg", params, &data); err != nil {
 		return message.Receipt{}, err
 	}
@@ -72,9 +75,16 @@ func (c *Client) sendPrivate(ctx context.Context, msg message.Message) (message.
 	if err != nil {
 		return message.Receipt{}, err
 	}
+	if msg.GroupID != "" {
+		groupID, err := parseTargetID(msg.GroupID)
+		if err != nil {
+			return message.Receipt{}, err
+		}
+		return c.sendPrivateMsg(ctx, userID, groupID, msg)
+	}
 
 	if c.directory.Loaded() && c.directory.IsFriend(userID) {
-		return c.sendPrivateMsg(ctx, userID, 0, msg.Text)
+		return c.sendPrivateMsg(ctx, userID, 0, msg)
 	}
 
 	var groupErrs []error
@@ -83,7 +93,7 @@ func (c *Client) sendPrivate(ctx context.Context, msg message.Message) (message.
 			if err := ctx.Err(); err != nil {
 				return message.Receipt{}, err
 			}
-			receipt, err := c.sendPrivateMsg(ctx, userID, groupID, msg.Text)
+			receipt, err := c.sendPrivateMsg(ctx, userID, groupID, msg)
 			if err == nil {
 				return receipt, nil
 			}
@@ -91,7 +101,7 @@ func (c *Client) sendPrivate(ctx context.Context, msg message.Message) (message.
 		}
 	}
 
-	receipt, fallbackErr := c.sendPrivateMsg(ctx, userID, 0, msg.Text)
+	receipt, fallbackErr := c.sendPrivateMsg(ctx, userID, 0, msg)
 	if fallbackErr == nil {
 		return receipt, nil
 	}
@@ -115,20 +125,28 @@ func (c *Client) sendPrivateMsg(
 	ctx context.Context,
 	userID int64,
 	groupID int64,
-	text string,
+	msg message.Message,
 ) (message.Receipt, error) {
 	var data struct {
 		MessageID flexID `json:"message_id"`
 	}
 	params := privateSendRequest{
-		UserID:  userID,
-		GroupID: groupID,
-		Message: text,
+		UserID:     userID,
+		GroupID:    groupID,
+		Message:    messageContent(msg),
+		AutoEscape: msg.AutoEscape,
 	}
 	if err := c.call(ctx, "send_private_msg", params, &data); err != nil {
 		return message.Receipt{}, err
 	}
 	return message.Receipt{MessageID: string(data.MessageID), SentAt: time.Now()}, nil
+}
+
+func messageContent(msg message.Message) any {
+	if len(msg.Content) > 0 {
+		return json.RawMessage(msg.Content)
+	}
+	return msg.Text
 }
 
 func parseTargetID(raw string) (int64, error) {

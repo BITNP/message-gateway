@@ -26,7 +26,7 @@ the HTTP and WebSocket APIs. It was extracted from
 - Dev-only fake NapCat for testing without a QQ account.
 - One Go dependency (`github.com/coder/websocket`); no cgo.
 
-## Account-scoped OneBot API (Stage 1)
+## Account-scoped OneBot API
 
 The new API gives each configured account one OneBot 11 base URL:
 
@@ -57,10 +57,10 @@ curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
   -H "Authorization: Bearer $QQ_CLIENT_TOKEN"
 ```
 
-In Stage 1, `send_private_msg`, `send_group_msg`, and `send_msg` on the account
-URL return `501`; queueing them is the next stage. The legacy
-`POST /api/v1/messages` and `GET /api/v1/ws` endpoints still work and remain
-documented below.
+Send actions enter the account queue. Normal sends wait for the result;
+`_async` actions return a delivery ID immediately. See [API.md](API.md) for
+request formats, queue behavior, and status tracking. The legacy endpoints
+remain available during migration.
 
 ## Local binary
 

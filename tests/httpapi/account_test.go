@@ -282,7 +282,7 @@ func TestAccountProxyNormalizesPath(t *testing.T) {
 	}
 }
 
-func TestAccountProxySendIsReserved(t *testing.T) {
+func TestAccountProxyRejectsInvalidSendWithoutForwarding(t *testing.T) {
 	upstream := &proxyRecording{body: `{"status":"ok","retcode":0}`}
 	upstreamServer := httptest.NewServer(upstream)
 	t.Cleanup(upstreamServer.Close)
@@ -297,8 +297,8 @@ func TestAccountProxySendIsReserved(t *testing.T) {
 			`{"user_id":10001,"message":"hello"}`,
 			"Bearer qq-token",
 		)
-		if recorder.Code != http.StatusNotImplemented {
-			t.Errorf("%s status = %d, want 501", action, recorder.Code)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("%s status = %d, want 400", action, recorder.Code)
 		}
 	}
 	if requests := upstream.snapshot(); len(requests) != 0 {

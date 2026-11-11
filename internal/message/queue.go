@@ -164,6 +164,18 @@ func (q *senderQueue) close() {
 	q.signal()
 }
 
+// failPending runs after the worker exits, including for an interrupted send
+// whose outcome is unknown. Observers can then release waiting callers.
+func (q *senderQueue) failPending() {
+	q.mu.Lock()
+	items := q.items
+	q.items = nil
+	q.mu.Unlock()
+	for _, item := range items {
+		notifyDelivery(item, DeliveryUpdate{State: DeliveryFailed, Attempts: item.attempts, Err: ErrClosed})
+	}
+}
+
 func (q *senderQueue) run(ctx context.Context, manager *Manager) {
 	for {
 		item, ok := q.head(ctx)
