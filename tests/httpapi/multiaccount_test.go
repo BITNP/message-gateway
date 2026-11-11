@@ -44,8 +44,8 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 
 	contents := fmt.Sprintf(`{
   "accounts": [
-    {"name": "qq-a", "driver": "napcat", "address": %q, "access_token": "token-a"},
-    {"name": "qq-b", "driver": "napcat", "address": %q, "access_token": "token-b"}
+    {"name": "qq-a", "driver": "napcat", "address": %q, "access_token": "token-a", "client_token": "client-a"},
+    {"name": "qq-b", "driver": "napcat", "address": %q, "access_token": "token-b", "client_token": "client-b"}
   ]
 }`, urlA, urlB)
 	path := filepath.Join(t.TempDir(), "accounts.json")
@@ -137,7 +137,7 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("http.NewRequest() error = %v", err)
 		}
-		tokens := map[string]string{"qq-a": "token-a", "qq-b": "token-b"}
+		tokens := map[string]string{"qq-a": "client-a", "qq-b": "client-b"}
 		token, ok := tokens[accountName]
 		if !ok {
 			t.Fatalf("no test token for account %q", accountName)

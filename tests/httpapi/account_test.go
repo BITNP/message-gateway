@@ -70,7 +70,7 @@ func (p *proxyRecording) snapshot() []proxiedRequest {
 	return append([]proxiedRequest(nil), p.requests...)
 }
 
-func newProxyAccount(t *testing.T, name, token, upstreamURL string) httpapi.Account {
+func newProxyAccount(t *testing.T, name, clientToken, upstreamURL string) httpapi.Account {
 	t.Helper()
 
 	client, err := napcat.NewClient(napcat.Config{
@@ -87,7 +87,7 @@ func newProxyAccount(t *testing.T, name, token, upstreamURL string) httpapi.Acco
 		Name:      name,
 		Driver:    "napcat",
 		Platform:  message.PlatformQQ,
-		TokenHash: sha256.Sum256([]byte(token)),
+		TokenHash: sha256.Sum256([]byte(clientToken)),
 		Proxy:     client,
 	}
 }

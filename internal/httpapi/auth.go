@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// tokenScope is the set of accounts a presented account token can access.
+// tokenScope is the set of accounts a presented client token can access.
 type tokenScope struct {
 	accounts map[string]struct{}
 }
@@ -16,7 +16,7 @@ func (s tokenScope) allows(account string) bool {
 	return ok
 }
 
-// requestToken reads an account token from the Authorization header or the
+// requestToken reads a client token from the Authorization header or the
 // OneBot 11 access_token query parameter. The header wins when both exist.
 func requestToken(r *http.Request) (string, bool) {
 	if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
@@ -48,8 +48,8 @@ func (s *Server) authenticate(r *http.Request) (scope tokenScope, present, valid
 	return scope, true, valid
 }
 
-// authorizeAccount checks that the caller's token belongs to the given
-// account. Account tokens are the only accepted credentials.
+// authorizeAccount checks that the caller's client token belongs to the given
+// account. Client tokens are the only accepted credentials.
 func (s *Server) authorizeAccount(w http.ResponseWriter, r *http.Request, account Account) bool {
 	scope, present, valid := s.authenticate(r)
 	if !present {

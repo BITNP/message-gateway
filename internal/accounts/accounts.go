@@ -17,7 +17,8 @@ import (
 )
 
 // Account is one configured outbound endpoint. TokenHash is the SHA-256 hash
-// of the account's access token; the raw token stays inside the driver.
+// of the account's client token; access_token stays inside the driver and is
+// only sent to the upstream OneBot service.
 type Account struct {
 	Name      string
 	Driver    string
@@ -68,6 +69,12 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 		if cfg.AccessToken == "" {
 			return Account{}, nil, errors.New("access_token is required for napcat")
 		}
+		if cfg.ClientToken == "" {
+			return Account{}, nil, errors.New("client_token is required")
+		}
+		if cfg.ClientToken == cfg.AccessToken {
+			return Account{}, nil, errors.New("client_token must differ from access_token")
+		}
 
 		client, err := napcat.NewClient(napcat.Config{
 			BaseURL:          cfg.Address,
@@ -84,8 +91,8 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 		}
 
 		var tokenHash [sha256.Size]byte
-		if cfg.AccessToken != "" {
-			tokenHash = sha256.Sum256([]byte(cfg.AccessToken))
+		if cfg.ClientToken != "" {
+			tokenHash = sha256.Sum256([]byte(cfg.ClientToken))
 		}
 
 		return Account{

@@ -51,6 +51,7 @@ type Account struct {
 	Driver           string
 	Address          string
 	AccessToken      string
+	ClientToken      string
 	Timeout          time.Duration
 	ProxyTimeout     time.Duration
 	DirectoryRefresh time.Duration
@@ -185,6 +186,7 @@ type fileAccount struct {
 	Driver           string `json:"driver"`
 	Address          string `json:"address"`
 	AccessToken      string `json:"access_token"`
+	ClientToken      string `json:"client_token"`
 	Timeout          string `json:"timeout"`
 	ProxyTimeout     string `json:"proxy_timeout"`
 	DirectoryRefresh string `json:"directory_refresh"`
@@ -304,11 +306,20 @@ func buildAccount(fa fileAccount) (Account, error) {
 		return Account{}, errors.New("access_token is required for napcat")
 	}
 
+	clientToken := strings.TrimSpace(fa.ClientToken)
+	if clientToken == "" {
+		return Account{}, errors.New("client_token is required")
+	}
+	if accessToken != "" && clientToken == accessToken {
+		return Account{}, errors.New("client_token must differ from access_token")
+	}
+
 	return Account{
 		Name:             name,
 		Driver:           driver,
 		Address:          address,
 		AccessToken:      accessToken,
+		ClientToken:      clientToken,
 		Timeout:          timeout,
 		ProxyTimeout:     proxyTimeout,
 		DirectoryRefresh: directoryRefresh,

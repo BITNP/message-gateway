@@ -14,7 +14,8 @@ func TestBuildExposesProxyAndTokenHash(t *testing.T) {
 			Name:        "qq",
 			Driver:      "napcat",
 			Address:     "http://napcat:3001",
-			AccessToken: "secret-token",
+			AccessToken: "upstream-token",
+			ClientToken: "client-token",
 		},
 	})
 	if err != nil {
@@ -31,20 +32,53 @@ func TestBuildExposesProxyAndTokenHash(t *testing.T) {
 	if account.Proxy == nil {
 		t.Error("Proxy = nil, want an account proxy")
 	}
-	if want := sha256.Sum256([]byte("secret-token")); account.TokenHash != want {
-		t.Error("TokenHash does not match the account access token")
+	if want := sha256.Sum256([]byte("client-token")); account.TokenHash != want {
+		t.Error("TokenHash does not match the account client token")
+	}
+	if account.TokenHash == sha256.Sum256([]byte("upstream-token")) {
+		t.Error("TokenHash must not use the upstream access token")
 	}
 }
 
 func TestBuildRejectsMissingAccessToken(t *testing.T) {
 	_, err := accounts.Build([]config.Account{
 		{
-			Name:    "qq",
-			Driver:  "napcat",
-			Address: "http://napcat:3001",
+			Name:        "qq",
+			Driver:      "napcat",
+			Address:     "http://napcat:3001",
+			ClientToken: "client-token",
 		},
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want missing access token error")
+	}
+}
+
+func TestBuildRejectsMissingClientToken(t *testing.T) {
+	_, err := accounts.Build([]config.Account{
+		{
+			Name:        "qq",
+			Driver:      "napcat",
+			Address:     "http://napcat:3001",
+			AccessToken: "upstream-token",
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want missing client token error")
+	}
+}
+
+func TestBuildRejectsEqualTokens(t *testing.T) {
+	_, err := accounts.Build([]config.Account{
+		{
+			Name:        "qq",
+			Driver:      "napcat",
+			Address:     "http://napcat:3001",
+			AccessToken: "same-token",
+			ClientToken: "same-token",
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want equal token error")
 	}
 }

@@ -68,7 +68,7 @@ type Server struct {
 	mux           *http.ServeMux
 }
 
-// New returns the gateway handler. Account tokens are matched by SHA-256 hash.
+// New returns the gateway handler. Client tokens are matched by SHA-256 hash.
 func New(enqueuer Enqueuer, opts Options) *Server {
 	maxConnections := opts.MaxConnections
 	if maxConnections <= 0 {
