@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 	"message-gateway/internal/message"
 )
 
-const testAPIKey = "test-key"
+const testAccountToken = "test-key"
 
 type fakeEnqueuer struct {
 	mu       sync.Mutex
@@ -53,34 +54,51 @@ func (f *fakeEnqueuer) lastMessage() message.Message {
 	return f.messages[len(f.messages)-1]
 }
 
+func testTokenHash(token string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(token))
+}
+
+// newTestServer fills in the shared test account token for accounts that do
+// not specify one. Tests that exercise account scoping set TokenHash directly.
+func newTestServer(enqueuer httpapi.Enqueuer, opts httpapi.Options) *httpapi.Server {
+	for name, account := range opts.Accounts {
+		if account.TokenHash == ([32]byte{}) {
+			account.TokenHash = testTokenHash(testAccountToken)
+			opts.Accounts[name] = account
+		}
+	}
+	return httpapi.New(enqueuer, opts)
+}
+
 func newHandler(enqueuer httpapi.Enqueuer) *httpapi.Server {
-	return httpapi.New(enqueuer, httpapi.Options{
+	return newTestServer(enqueuer, httpapi.Options{
 		Accounts: map[string]httpapi.Account{
 			"qq": {
-				Name:     "qq",
-				Driver:   "napcat",
-				Platform: message.PlatformQQ,
+				Name:      "qq",
+				Driver:    "napcat",
+				Platform:  message.PlatformQQ,
+				TokenHash: testTokenHash(testAccountToken),
 			},
 		},
-		APIKey: testAPIKey,
 	})
 }
 
 func newMultiAccountHandler(enqueuer httpapi.Enqueuer) *httpapi.Server {
-	return httpapi.New(enqueuer, httpapi.Options{
+	return newTestServer(enqueuer, httpapi.Options{
 		Accounts: map[string]httpapi.Account{
 			"qq": {
-				Name:     "qq",
-				Driver:   "napcat",
-				Platform: message.PlatformQQ,
+				Name:      "qq",
+				Driver:    "napcat",
+				Platform:  message.PlatformQQ,
+				TokenHash: testTokenHash(testAccountToken),
 			},
 			"qq-backup": {
-				Name:     "qq-backup",
-				Driver:   "napcat",
-				Platform: message.PlatformQQ,
+				Name:      "qq-backup",
+				Driver:    "napcat",
+				Platform:  message.PlatformQQ,
+				TokenHash: testTokenHash(testAccountToken),
 			},
 		},
-		APIKey: testAPIKey,
 	})
 }
 
@@ -104,7 +122,7 @@ func doRequest(
 }
 
 func bearerToken() string {
-	return "Bearer " + testAPIKey
+	return "Bearer " + testAccountToken
 }
 
 func validBody() string {
@@ -132,12 +150,13 @@ func TestSendRequiresAuth(t *testing.T) {
 	tests := []struct {
 		name          string
 		authorization string
+		want          int
 	}{
-		{"missing", ""},
-		{"wrong scheme", "Basic " + testAPIKey},
-		{"wrong token", "Bearer wrong"},
-		{"missing token", "Bearer"},
-		{"extra fields", "Bearer " + testAPIKey + " extra"},
+		{"missing", "", http.StatusUnauthorized},
+		{"wrong scheme", "Basic " + testAccountToken, http.StatusUnauthorized},
+		{"wrong token", "Bearer wrong", http.StatusForbidden},
+		{"missing token", "Bearer", http.StatusUnauthorized},
+		{"extra fields", "Bearer " + testAccountToken + " extra", http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -146,11 +165,13 @@ func TestSendRequiresAuth(t *testing.T) {
 			handler := newHandler(enqueuer)
 
 			recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", validBody(), tt.authorization)
-			if recorder.Code != http.StatusUnauthorized {
-				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+			if recorder.Code != tt.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.want)
 			}
-			if got := recorder.Header().Get("WWW-Authenticate"); got == "" {
-				t.Error("WWW-Authenticate header is missing")
+			if tt.want == http.StatusUnauthorized {
+				if got := recorder.Header().Get("WWW-Authenticate"); got == "" {
+					t.Error("WWW-Authenticate header is missing")
+				}
 			}
 			if enqueuer.callCount() != 0 {
 				t.Error("enqueuer was called for an unauthorized request")
@@ -163,7 +184,7 @@ func TestSendAcceptsCaseInsensitiveBearerScheme(t *testing.T) {
 	enqueuer := &fakeEnqueuer{}
 	handler := newHandler(enqueuer)
 
-	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", validBody(), "bearer "+testAPIKey)
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", validBody(), "bearer "+testAccountToken)
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusAccepted)
 	}

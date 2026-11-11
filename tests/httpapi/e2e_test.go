@@ -76,7 +76,7 @@ func newEndToEndGateway(t *testing.T) (*fakenapcat.Server, *httptest.Server) {
 		}
 	})
 
-	api := httpapi.New(manager, httpapi.Options{
+	api := newTestServer(manager, httpapi.Options{
 		Accounts: map[string]httpapi.Account{
 			"qq": {
 				Name:     "qq",
@@ -84,7 +84,6 @@ func newEndToEndGateway(t *testing.T) (*fakenapcat.Server, *httptest.Server) {
 				Platform: message.PlatformQQ,
 			},
 		},
-		APIKey: testAPIKey,
 	})
 	gateway := httptest.NewServer(api)
 	t.Cleanup(gateway.Close)
@@ -135,7 +134,7 @@ func TestGatewaySendReachesNapCat(t *testing.T) {
 func TestGatewayWebSocketSendReachesNapCat(t *testing.T) {
 	fake, gateway := newEndToEndGateway(t)
 
-	conn := dialWebSocket(t, gateway, testAPIKey)
+	conn := dialWebSocket(t, gateway, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "hello over websocket"))

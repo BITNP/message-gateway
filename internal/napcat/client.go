@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
@@ -33,9 +35,10 @@ var permanentRetcodes = map[int]struct{}{
 
 // Config controls the NapCat HTTP client.
 type Config struct {
-	BaseURL     string
-	AccessToken string
-	Timeout     time.Duration
+	BaseURL      string
+	AccessToken  string
+	Timeout      time.Duration
+	ProxyTimeout time.Duration
 
 	DirectoryRefresh time.Duration
 	DirectoryRetry   time.Duration
@@ -55,6 +58,7 @@ type Client struct {
 	baseURL     string
 	accessToken string
 	httpClient  *http.Client
+	proxy       *httputil.ReverseProxy
 	directory   *memberDirectory
 	cfg         Config
 }
@@ -85,6 +89,12 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 10 * time.Second
 	}
+	if cfg.ProxyTimeout < 0 {
+		return nil, errors.New("napcat: proxy timeout must not be negative")
+	}
+	if cfg.ProxyTimeout == 0 {
+		cfg.ProxyTimeout = 30 * time.Second
+	}
 	if cfg.DirectoryRefresh < 0 {
 		return nil, errors.New("napcat: directory refresh must not be negative")
 	}
@@ -104,13 +114,60 @@ func NewClient(cfg Config) (*Client, error) {
 		cfg.DirectoryTimeout = 60 * time.Second
 	}
 
+	target := *parsed
+	target.Path = strings.TrimRight(target.Path, "/")
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.Fragment = ""
+
+	proxyTransport := http.DefaultTransport.(*http.Transport).Clone()
+	proxyTransport.ResponseHeaderTimeout = cfg.ProxyTimeout
+	proxyTransport.MaxIdleConnsPerHost = 16
+
+	accessToken := strings.TrimSpace(cfg.AccessToken)
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(&target)
+			pr.Out.Header.Del("Authorization")
+			if accessToken != "" {
+				pr.Out.Header.Set("Authorization", "Bearer "+accessToken)
+			}
+			if query := pr.Out.URL.Query(); query.Has("access_token") {
+				query.Del("access_token")
+				pr.Out.URL.RawQuery = query.Encode()
+			}
+		},
+		Transport:     proxyTransport,
+		FlushInterval: 100 * time.Millisecond,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("napcat: proxy %s %s: %v", r.Method, r.URL.Path, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(
+				w,
+				`{"status":"failed","retcode":1500,"data":null,"message":"upstream request failed"}`,
+			)
+		},
+	}
+
 	return &Client{
 		baseURL:     strings.TrimRight(baseURL, "/"),
-		accessToken: strings.TrimSpace(cfg.AccessToken),
+		accessToken: accessToken,
 		httpClient:  &http.Client{Timeout: cfg.Timeout},
+		proxy:       proxy,
 		directory:   newMemberDirectory(),
 		cfg:         cfg,
 	}, nil
+}
+
+// ServeHTTP proxies one OneBot 11 HTTP action to the configured endpoint.
+// The caller must strip the account URL prefix before calling ServeHTTP.
+func (c *Client) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Upgrade") != "" {
+		http.Error(w, "websocket proxying is not supported", http.StatusNotImplemented)
+		return
+	}
+	c.proxy.ServeHTTP(w, r)
 }
 
 // Check returns the account NapCat is currently logged into.

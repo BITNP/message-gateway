@@ -42,6 +42,10 @@ func TestNewClientValidation(t *testing.T) {
 			cfg:  napcat.Config{BaseURL: "http://napcat:3001", Timeout: -time.Second},
 		},
 		{
+			name: "negative proxy timeout",
+			cfg:  napcat.Config{BaseURL: "http://napcat:3001", ProxyTimeout: -time.Second},
+		},
+		{
 			name: "negative directory refresh",
 			cfg:  napcat.Config{BaseURL: "http://napcat:3001", DirectoryRefresh: -time.Second},
 		},

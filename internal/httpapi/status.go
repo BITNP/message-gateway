@@ -20,6 +20,7 @@ const defaultStatusCapacity = 4096
 
 // statusEntry is the latest known delivery state for one enqueued message.
 type statusEntry struct {
+	account  string
 	state    string
 	attempts int
 	err      string
@@ -52,13 +53,16 @@ func newStatusRegistry(capacity int) *statusRegistry {
 // register records a newly accepted delivery as queued. If the id is already
 // tracked, register does nothing: a fast worker may report an update before
 // the enqueueing handler gets to run, and that update must not be downgraded.
-func (r *statusRegistry) register(id message.DeliveryID) {
+func (r *statusRegistry) register(id message.DeliveryID, account string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.entries[id]; ok {
+	if entry, ok := r.entries[id]; ok {
+		if entry.account == "" {
+			entry.account = account
+		}
 		return
 	}
-	r.track(id, &statusEntry{state: statusQueued})
+	r.track(id, &statusEntry{account: account, state: statusQueued})
 }
 
 // update records a delivery lifecycle notification. It is called from the
@@ -66,7 +70,7 @@ func (r *statusRegistry) register(id message.DeliveryID) {
 // the DeliveryObserver contract requires. An update for an unknown or already
 // evicted id re-tracks it; it is then evicted again like any other entry.
 func (r *statusRegistry) update(u message.DeliveryUpdate) {
-	entry := &statusEntry{attempts: u.Attempts}
+	entry := &statusEntry{account: u.Account, attempts: u.Attempts}
 	switch u.State {
 	case message.DeliveryRetrying:
 		entry.state = statusRetrying
@@ -85,9 +89,13 @@ func (r *statusRegistry) update(u message.DeliveryUpdate) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.entries[u.ID]; !ok {
+	existing, ok := r.entries[u.ID]
+	if !ok {
 		r.track(u.ID, entry)
 		return
+	}
+	if entry.account == "" {
+		entry.account = existing.account
 	}
 	r.entries[u.ID] = entry
 }

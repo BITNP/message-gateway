@@ -285,7 +285,7 @@ func TestStatusRequiresAuth(t *testing.T) {
 
 func TestStatusEvictsOldest(t *testing.T) {
 	enqueuer := &statusEnqueuer{}
-	handler := httpapi.New(enqueuer, httpapi.Options{
+	handler := newTestServer(enqueuer, httpapi.Options{
 		Accounts: map[string]httpapi.Account{
 			"qq": {
 				Name:     "qq",
@@ -293,7 +293,6 @@ func TestStatusEvictsOldest(t *testing.T) {
 				Platform: message.PlatformQQ,
 			},
 		},
-		APIKey:         testAPIKey,
 		StatusCapacity: 2,
 	})
 
@@ -402,7 +401,7 @@ func TestStatusTracksWebSocketDelivery(t *testing.T) {
 	}}
 
 	srv, _ := newSendGateway(t, sendConfig(), sender)
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "hello"))

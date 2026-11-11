@@ -28,6 +28,11 @@ type sendResponse struct {
 }
 
 func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.requireLegacyToken(w, r)
+	if !ok {
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	defer r.Body.Close()
 
@@ -50,6 +55,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	account, err := s.resolveAccount(request.Platform)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !scope.allows(account.Name) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -76,7 +85,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.statuses.register(id)
+	s.statuses.register(id, account.Name)
 	writeJSON(w, http.StatusAccepted, sendResponse{
 		ID:     string(id),
 		Status: "queued",
@@ -106,13 +115,24 @@ type statusResponse struct {
 // enqueued in this process, was evicted from the bounded registry, or the
 // gateway restarted since the message was sent.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.requireLegacyToken(w, r)
+	if !ok {
+		return
+	}
+
 	id := message.DeliveryID(r.PathValue("id"))
 	entry, ok := s.statuses.lookup(id)
-	if !ok {
+	if !ok || !scope.allows(entry.account) {
 		writeError(w, http.StatusNotFound, "unknown delivery id")
 		return
 	}
 
+	writeStatusResponse(w, id, entry)
+}
+
+// writeStatusResponse writes one delivery status. Both the legacy status
+// route and the account-scoped status route use it.
+func writeStatusResponse(w http.ResponseWriter, id message.DeliveryID, entry statusEntry) {
 	response := statusResponse{ID: string(id), Status: entry.state}
 	switch entry.state {
 	case statusRetrying:
