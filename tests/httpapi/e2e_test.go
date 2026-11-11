@@ -131,6 +131,32 @@ func TestGatewaySendReachesNapCat(t *testing.T) {
 	}
 }
 
+func TestOneBotSendReachesNapCat(t *testing.T) {
+	fake, gateway := newEndToEndGateway(t)
+	request, err := http.NewRequest(http.MethodPost, gateway.URL+"/api/v1/accounts/qq/send_private_msg", strings.NewReader(`{"user_id":10001,"message":"hello from OneBot"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", bearerToken())
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	select {
+	case call := <-fake.Sent():
+		if call.Kind != "private" || call.UserID != 10001 || call.Text != "hello from OneBot" {
+			t.Fatalf("unexpected send: %+v", call)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for NapCat send")
+	}
+}
+
 func TestGatewayWebSocketSendReachesNapCat(t *testing.T) {
 	fake, gateway := newEndToEndGateway(t)
 
