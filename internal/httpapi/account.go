@@ -9,7 +9,7 @@ import (
 )
 
 // sendActions are the OneBot 11 message-send actions intercepted by the
-// gateway. Stage 1 reserves them but does not queue them yet.
+// gateway and queued for delivery.
 var sendActions = map[string]struct{}{
 	"send_private_msg": {},
 	"send_group_msg":   {},

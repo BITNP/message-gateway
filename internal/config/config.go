@@ -20,8 +20,7 @@ import (
 const (
 	defaultHTTPAddr = ":8081"
 
-	defaultWebSocketMaxConnections = 16
-	defaultStatusCapacity          = 4096
+	defaultStatusCapacity = 4096
 
 	defaultQueueSize    = 100
 	defaultSendTimeout  = 30 * time.Second
@@ -62,12 +61,11 @@ type Account struct {
 
 // Config is the validated runtime configuration for the gateway.
 type Config struct {
-	HTTPAddr                string
-	WebSocketMaxConnections int
-	StatusCapacity          int
-	Accounts                []Account
-	Manager                 message.Config
-	Gap                     message.GapPolicy
+	HTTPAddr       string
+	StatusCapacity int
+	Accounts       []Account
+	Manager        message.Config
+	Gap            message.GapPolicy
 }
 
 // Load reads and validates the gateway environment. MESSAGE_ACCOUNTS_FILE is
@@ -77,14 +75,6 @@ func Load(getenv func(string) string) (Config, error) {
 	httpAddr := strings.TrimSpace(getenv("HTTP_ADDR"))
 	if httpAddr == "" {
 		httpAddr = defaultHTTPAddr
-	}
-
-	webSocketMaxConnections, err := parsePositiveIntSetting(
-		getenv("MESSAGE_WS_MAX_CONNECTIONS"),
-		defaultWebSocketMaxConnections,
-	)
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid MESSAGE_WS_MAX_CONNECTIONS: %w", err)
 	}
 
 	statusCapacity, err := parsePositiveIntSetting(getenv("MESSAGE_STATUS_CAPACITY"), defaultStatusCapacity)
@@ -162,10 +152,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return Config{
-		HTTPAddr:                httpAddr,
-		WebSocketMaxConnections: webSocketMaxConnections,
-		StatusCapacity:          statusCapacity,
-		Accounts:                accounts,
+		HTTPAddr:       httpAddr,
+		StatusCapacity: statusCapacity,
+		Accounts:       accounts,
 		Manager: message.Config{
 			QueueSize:    queueSize,
 			SendTimeout:  sendTimeout,

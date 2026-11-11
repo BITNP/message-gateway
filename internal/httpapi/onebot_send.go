@@ -12,7 +12,7 @@ import (
 	"message-gateway/internal/message"
 )
 
-// handleOneBotSend accepts a send into the same account queue as legacy sends.
+// handleOneBotSend accepts a send into the account queue.
 func (s *Server) handleOneBotSend(w http.ResponseWriter, r *http.Request, account Account, action string) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	params := make(map[string]json.RawMessage)
@@ -141,7 +141,11 @@ func (s *Server) handleOneBotSend(w http.ResponseWriter, r *http.Request, accoun
 	select {
 	case update := <-updates:
 		if update.State == message.DeliverySent {
-			writeJSON(w, 200, map[string]any{"status": "ok", "retcode": 0, "data": map[string]any{"message_id": update.Receipt.MessageID, "delivery_id": deliveryID}})
+			var messageID any = update.Receipt.MessageID
+			if id, err := strconv.ParseInt(update.Receipt.MessageID, 10, 64); err == nil {
+				messageID = id
+			}
+			writeJSON(w, 200, map[string]any{"status": "ok", "retcode": 0, "data": map[string]any{"message_id": messageID, "delivery_id": deliveryID}})
 		} else {
 			writeOneBotError(w, 502, 1500, fmt.Sprintf("delivery %s failed: %s", deliveryID, errText(update.Err)))
 		}

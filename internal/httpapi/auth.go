@@ -68,23 +68,6 @@ func (s *Server) authorizeAccount(w http.ResponseWriter, r *http.Request, accoun
 	return false
 }
 
-// requireLegacyToken authenticates a legacy endpoint and writes the legacy
-// error shape. The handler must still check that the resolved account is in
-// the returned scope.
-func (s *Server) requireLegacyToken(w http.ResponseWriter, r *http.Request) (tokenScope, bool) {
-	scope, present, valid := s.authenticate(r)
-	if !present {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="message-gateway"`)
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return tokenScope{}, false
-	}
-	if !valid {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return tokenScope{}, false
-	}
-	return scope, true
-}
-
 func bearerToken(header string) (string, bool) {
 	parts := strings.Fields(header)
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {

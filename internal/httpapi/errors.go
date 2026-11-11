@@ -8,19 +8,11 @@ import (
 
 const maxRequestBodyBytes = 1 << 20
 
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
 type oneBotErrorResponse struct {
 	Status  string `json:"status"`
 	Retcode int    `json:"retcode"`
 	Data    any    `json:"data"`
 	Message string `json:"message,omitempty"`
-}
-
-func writeError(w http.ResponseWriter, status int, text string) {
-	writeJSON(w, status, errorResponse{Error: text})
 }
 
 // writeOneBotError writes an OneBot 11 shaped error for account-scoped routes.

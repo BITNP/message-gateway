@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,22 +69,24 @@ func (f *statusEnqueuer) deliver(update message.DeliveryUpdate) {
 
 func postMessage(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", validBody(), bearerToken())
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/accounts/qq/send_private_msg_async?user_id=10001&message=hello", "", bearerToken())
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("send status = %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
 	}
 	var response struct {
-		ID string `json:"id"`
+		Data struct {
+			ID string `json:"delivery_id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode send response: %v", err)
 	}
-	return response.ID
+	return response.Data.ID
 }
 
 func fetchStatus(t *testing.T, handler http.Handler, id string) *httptest.ResponseRecorder {
 	t.Helper()
-	return doRequest(t, handler, http.MethodGet, "/api/v1/messages/"+id, "", bearerToken())
+	return doRequest(t, handler, http.MethodGet, "/api/v1/accounts/qq/message-status/"+id, "", bearerToken())
 }
 
 type statusResponseBody struct {
@@ -274,7 +275,7 @@ func TestStatusUnknownID(t *testing.T) {
 func TestStatusRequiresAuth(t *testing.T) {
 	handler := newHandler(&statusEnqueuer{})
 
-	recorder := doRequest(t, handler, http.MethodGet, "/api/v1/messages/qq-1", "", "")
+	recorder := doRequest(t, handler, http.MethodGet, "/api/v1/accounts/qq/message-status/qq-1", "", "")
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
@@ -338,132 +339,12 @@ func TestStatusEnqueueRejectionRegistersNothing(t *testing.T) {
 	enqueuer := &statusEnqueuer{err: message.ErrQueueFull}
 	handler := newHandler(enqueuer)
 
-	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", validBody(), bearerToken())
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/accounts/qq/send_private_msg_async?user_id=10001&message=hello", "", bearerToken())
 	if recorder.Code != http.StatusTooManyRequests {
 		t.Fatalf("send status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
 	}
 
 	if code := fetchStatus(t, handler, "qq-1").Code; code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d (rejected sends have no delivery id)", code, http.StatusNotFound)
-	}
-}
-
-func fetchStatusHTTP(t *testing.T, srv *httptest.Server, id string) *http.Response {
-	t.Helper()
-
-	request, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/messages/"+id, nil)
-	if err != nil {
-		t.Fatalf("build status request: %v", err)
-	}
-	request.Header.Set("Authorization", bearerToken())
-
-	response, err := srv.Client().Do(request)
-	if err != nil {
-		t.Fatalf("GET status: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = response.Body.Close()
-	})
-	return response
-}
-
-func decodeStatusHTTP(t *testing.T, response *http.Response) statusResponseBody {
-	t.Helper()
-
-	var body statusResponseBody
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatalf("decode status response: %v", err)
-	}
-	return body
-}
-
-// TestStatusTracksWebSocketDelivery sends through a real manager over the
-// WebSocket API and checks that every delivery frame has a matching HTTP
-// status. The first two sends block on channels so each state is observed
-// before the worker can advance past it.
-func TestStatusTracksWebSocketDelivery(t *testing.T) {
-	var attempts atomic.Int32
-	first := make(chan struct{})
-	second := make(chan struct{})
-	sentAt := time.Date(2026, time.November, 7, 3, 14, 15, 0, time.UTC)
-
-	sender := funcSender{fn: func(context.Context, message.Message) (message.Receipt, error) {
-		switch attempts.Add(1) {
-		case 1:
-			<-first
-			return message.Receipt{}, fmt.Errorf("%w: temporary", message.ErrTransient)
-		case 2:
-			<-second
-			return message.Receipt{MessageID: "777", SentAt: sentAt}, nil
-		default:
-			return message.Receipt{}, fmt.Errorf("%w: too many attempts", message.ErrPermanent)
-		}
-	}}
-
-	srv, _ := newSendGateway(t, sendConfig(), sender)
-	conn := dialWebSocket(t, srv, testAccountToken)
-	_ = readFrame(t, conn) // ready
-
-	writeFrame(t, conn, sendFramePayload("r-1", "hello"))
-
-	queued := decodeFrame[queuedFrame](t, readFrame(t, conn))
-	if queued.Type != "queued" {
-		t.Fatalf("frame type = %q, want queued", queued.Type)
-	}
-	if queued.RequestID != "r-1" {
-		t.Errorf("request id = %q, want r-1", queued.RequestID)
-	}
-	id := queued.ID
-
-	response := fetchStatusHTTP(t, srv, id)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("queued status = %d, want %d", response.StatusCode, http.StatusOK)
-	}
-	if body := decodeStatusHTTP(t, response); body.Status != "queued" {
-		t.Errorf("status = %q, want queued", body.Status)
-	}
-
-	close(first)
-	retrying := decodeFrame[retryingFrame](t, readFrame(t, conn))
-	if retrying.Type != "retrying" {
-		t.Fatalf("frame type = %q, want retrying", retrying.Type)
-	}
-	if retrying.ID != id {
-		t.Errorf("frame id = %q, want %q", retrying.ID, id)
-	}
-	if retrying.Attempt != 1 {
-		t.Errorf("attempt = %d, want 1", retrying.Attempt)
-	}
-
-	response = fetchStatusHTTP(t, srv, id)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("retrying status = %d, want %d", response.StatusCode, http.StatusOK)
-	}
-	if body := decodeStatusHTTP(t, response); body.Status != "retrying" || body.Attempts != 1 {
-		t.Errorf("body = %+v, want retrying with 1 attempt", body)
-	}
-
-	close(second)
-	sent := decodeFrame[sentFrame](t, readFrame(t, conn))
-	if sent.Type != "sent" {
-		t.Fatalf("frame type = %q, want sent", sent.Type)
-	}
-	if sent.ID != id {
-		t.Errorf("frame id = %q, want %q", sent.ID, id)
-	}
-	if sent.MessageID != "777" {
-		t.Errorf("frame message id = %q, want 777", sent.MessageID)
-	}
-
-	response = fetchStatusHTTP(t, srv, id)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("sent status = %d, want %d", response.StatusCode, http.StatusOK)
-	}
-	body := decodeStatusHTTP(t, response)
-	if body.Status != "sent" {
-		t.Errorf("status = %q, want sent", body.Status)
-	}
-	if body.Receipt == nil || body.Receipt.MessageID != "777" {
-		t.Errorf("receipt = %+v, want message id 777", body.Receipt)
 	}
 }

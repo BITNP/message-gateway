@@ -49,7 +49,6 @@ func main() {
 
 	api := httpapi.New(manager, httpapi.Options{
 		Accounts:       httpapiAccounts(registry),
-		MaxConnections: cfg.WebSocketMaxConnections,
 		StatusCapacity: cfg.StatusCapacity,
 	})
 
@@ -101,10 +100,9 @@ func main() {
 		}
 	}
 
-	// Hijacked WebSocket connections are not tracked by net/http, so close
-	// them explicitly before shutting the server down.
-	api.CloseWebSockets()
-
+	// Stop the workers first so waiting HTTP sends are released on shutdown.
+	cancel()
+	background.Wait()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
@@ -113,8 +111,6 @@ func main() {
 	}
 	shutdownCancel()
 
-	cancel()
-	background.Wait()
 	log.Println("message-gateway stopped")
 
 	if exitCode != 0 {

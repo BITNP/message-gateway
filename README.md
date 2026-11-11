@@ -2,7 +2,7 @@
 
 Standalone outbound message gateway for clinic services. It owns the NapCat /
 OneBot 11 transport, the per-account FIFO queue, gap-based pacing, retries, and
-the HTTP and WebSocket APIs. It was extracted from
+the HTTP API. It was extracted from
 `clinic-backend/internal/message` and keeps that behavior.
 
 ## Features
@@ -11,12 +11,6 @@ the HTTP and WebSocket APIs. It was extracted from
   pass-through for ordinary actions and per-account token auth.
 - Account-scoped delivery status at
   `/api/v1/accounts/{account}/message-status/{delivery_id}`.
-- Legacy bearer-authenticated `POST /api/v1/messages` for private or group QQ
-  messages.
-- Bearer-authenticated `GET /api/v1/ws` that reports `queued`, `retrying`,
-  `sent`, and `failed` for each message, with pipelined requests.
-- Bearer-authenticated `GET /api/v1/messages/{id}` that reports the latest
-  delivery status of a message sent over either transport.
 - Asynchronous delivery through one in-memory FIFO queue per configured account.
 - Multiple accounts per gateway, each with its own endpoint, queue, and pacing.
 - Configurable gap policy, retry policy, and queue capacity.
@@ -24,7 +18,7 @@ the HTTP and WebSocket APIs. It was extracted from
 - Public `GET /healthz` liveness endpoint.
 - Docker Compose stack for the gateway, plus an optional sample NapCat stack.
 - Dev-only fake NapCat for testing without a QQ account.
-- One Go dependency (`github.com/coder/websocket`); no cgo.
+- No external Go dependencies or cgo.
 
 ## Account-scoped OneBot API
 
@@ -59,8 +53,7 @@ curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
 
 Send actions enter the account queue. Normal sends wait for the result;
 `_async` actions return a delivery ID immediately. See [API.md](API.md) for
-request formats, queue behavior, and status tracking. The legacy endpoints
-remain available during migration.
+request formats, queue behavior, and status tracking.
 
 ## Local binary
 
@@ -83,16 +76,13 @@ in the example file.
 ```bash
 curl http://127.0.0.1:8081/healthz
 
-curl -X POST http://127.0.0.1:8081/api/v1/messages \
+curl -X POST http://127.0.0.1:8081/api/v1/accounts/qq/send_private_msg_async \
   -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello"}'
-
-websocat -H "Authorization: Bearer $QQ_CLIENT_TOKEN" \
-  ws://127.0.0.1:8081/api/v1/ws
+  -d '{"user_id":10001,"message":"hello"}'
 ```
 
-See [API.md](API.md) for the full HTTP and WebSocket contract.
+See [API.md](API.md) for the full HTTP contract.
 
 ## Accounts
 
@@ -276,24 +266,24 @@ before starting it. `QQ_CLIENT_TOKEN` is only used by the curl examples.
 **Send a private message:**
 
 ```bash
-curl -i -X POST http://127.0.0.1:8081/api/v1/messages \
+curl -i -X POST http://127.0.0.1:8081/api/v1/accounts/qq/send_private_msg_async \
   -H "Authorization: Bearer test-key" \
   -H "Content-Type: application/json" \
-  -d '{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello from gateway"}'
+  -d '{"user_id":10001,"message":"hello from gateway"}'
 ```
 
 Expected response:
 
 ```json
-{"id":"qq-1","status":"queued"}
+{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}
 ```
 
-`platform` is the account name from `accounts.json`; it is required.
+`qq` is the account name from `accounts.json`.
 
 **Check the delivery status:**
 
 ```bash
-curl -s http://127.0.0.1:8081/api/v1/messages/qq-1 \
+curl -s http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
   -H "Authorization: Bearer test-key"
 ```
 
@@ -334,10 +324,10 @@ You should see the text, target, and fake message id:
 **Send a group message:**
 
 ```bash
-curl -s -X POST http://127.0.0.1:8081/api/v1/messages \
+curl -s -X POST http://127.0.0.1:8081/api/v1/accounts/qq/send_group_msg_async \
   -H "Authorization: Bearer test-key" \
   -H "Content-Type: application/json" \
-  -d '{"platform":"qq","target":{"kind":"group","id":"20001"},"text":"group hello"}'
+  -d '{"group_id":20001,"message":"group hello"}'
 ```
 
 **Reset the fake server:**
@@ -352,31 +342,9 @@ curl -s -X POST http://127.0.0.1:3001/_reset
 curl -s http://127.0.0.1:8081/healthz
 ```
 
-**WebSocket (optional, requires `websocat`):**
-
-```bash
-websocat -H "Authorization: Bearer test-key" ws://127.0.0.1:8081/api/v1/ws
-```
-
-Then send:
-
-```json
-{"type":"send","request_id":"r1","platform":"qq","target":{"kind":"user","id":"10001"},"text":"websocket hello"}
-```
-
-Expected frames:
-
-```json
-{"type":"ready","version":1,"accounts":[{"name":"qq","driver":"napcat"}]}
-{"type":"queued","request_id":"r1","id":"qq-1"}
-{"type":"sent","request_id":"r1","id":"qq-1","message_id":"1000","sent_at":"..."}
-```
-
 **Common mistakes:**
 
-- `400 account is required` — `platform` was omitted. It is always required.
-- `400 unknown account "..."` — `platform` must match an entry `name` in
-  `accounts.json`.
+- `404 unknown account` — the URL account must match an entry in `accounts.json`.
 - Startup error `access_token is required for napcat` — add a non-empty
   `access_token`.
 - Startup error `client_token is required` — add a gateway client token.
@@ -462,8 +430,7 @@ is not part of the production image.
 
 ## clinic-backend integration
 
-The backend integration contract is HTTP; WebSocket is optional and only needed
-by callers that want delivery feedback. In the backend `.env`:
+The backend integration contract is account-scoped HTTP. In the backend `.env`:
 
 ```bash
 # Host-run backend development:
@@ -488,7 +455,6 @@ testing without QQ.
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8081` | HTTP listen address. Compose fixes this at `:8081` in the container. |
 | `MESSAGE_ACCOUNTS_FILE` | required | JSON file with the configured accounts and their access/client tokens. |
-| `MESSAGE_WS_MAX_CONNECTIONS` | `16` | Maximum concurrent WebSocket connections. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoint. |
 | `MESSAGE_QUEUE_SIZE` | `100` | Per-account queue capacity. |
 | `MESSAGE_SEND_TIMEOUT` | `30s` | Per-send timeout. |
@@ -541,15 +507,11 @@ Used only by `docker-compose.napcat.yml`.
   own client, queue, pacing, and worker.
 - Account config is read once at startup. Restart the service after editing
   `accounts.json`; there is no hot reload.
-- Over HTTP, `202 Accepted` means the message was queued, not delivered. Use
-  `GET /api/v1/messages/{id}` or `GET /api/v1/ws` when the send outcome
-  matters.
-- Over WebSocket, `sent` means NapCat accepted the message; it does not prove
-  the recipient read it. Delivery events belong to the connection that
-  enqueued the message and are not replayed after a reconnect.
+- `202 Accepted` means the message was queued, not delivered. Query
+  `/api/v1/accounts/{account}/message-status/{delivery_id}` for its outcome.
+- `sent` means NapCat accepted the message; it does not prove it was read.
 - A client retry can duplicate a send because requests have no idempotency key.
-- Platform-specific validation, such as numeric QQ IDs, remains in the NapCat
-  driver. Invalid IDs are accepted at enqueue time and fail during delivery.
+- Send requests require positive numeric QQ target IDs before enqueueing.
 - `GET /healthz` is a liveness check. It does not report NapCat connectivity or
   directory readiness.
 - The gateway does not terminate TLS. Run it on a private network or behind a
@@ -578,7 +540,7 @@ cmd/fake-napcat/       dev-only fake OneBot server
 internal/accounts/     per-account sender registry and driver factory
 internal/config/       environment and accounts.json loading/validation
 internal/fakenapcat/   fake OneBot implementation
-internal/httpapi/      HTTP and WebSocket transport
+internal/httpapi/      HTTP transport
 internal/message/      platform-neutral message model, queue, and manager
 internal/napcat/       OneBot 11 HTTP transport for NapCat
 tests/                 external tests

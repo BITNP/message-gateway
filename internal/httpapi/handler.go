@@ -4,101 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
-	"net/http"
-	"strings"
-
 	"message-gateway/internal/message"
+	"net/http"
 )
 
-type targetRequest struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-}
-
-type sendRequest struct {
-	Platform string        `json:"platform"`
-	Target   targetRequest `json:"target"`
-	Text     string        `json:"text"`
-}
-
-type sendResponse struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-}
-
-func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
-	scope, ok := s.requireLegacyToken(w, r)
-	if !ok {
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	defer r.Body.Close()
-
-	var request sendRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&request); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if err := ensureSingleJSON(decoder); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	account, err := s.resolveAccount(request.Platform)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !scope.allows(account.Name) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	msg := messageFromRequest(account, request.Target, request.Text)
-	if err := msg.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	id, err := s.enqueuer.EnqueueObserved(r.Context(), msg, s.statuses.update)
-	if err != nil {
-		switch {
-		case errors.Is(err, message.ErrInvalidMessage):
-			writeError(w, http.StatusBadRequest, err.Error())
-		case errors.Is(err, message.ErrQueueFull):
-			w.Header().Set("Retry-After", "1")
-			writeError(w, http.StatusTooManyRequests, "message queue is full")
-		case errors.Is(err, message.ErrClosed):
-			writeError(w, http.StatusServiceUnavailable, "message manager is closed")
-		default:
-			log.Printf("httpapi: enqueue message: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
-		}
-		return
-	}
-
-	s.statuses.register(id, account.Name)
-	writeJSON(w, http.StatusAccepted, sendResponse{
-		ID:     string(id),
-		Status: "queued",
-	})
-}
-
-// statusReceiptResponse is the receipt block of a sent delivery.
 type statusReceiptResponse struct {
 	MessageID string `json:"message_id"`
 	SentAt    string `json:"sent_at,omitempty"`
 }
 
-// statusResponse is the body of GET /api/v1/messages/{id}. Fields other than
+// statusResponse is the body of an account status query. Fields other than
 // id and status appear only for the states that carry them.
 type statusResponse struct {
 	ID        string                 `json:"id"`
@@ -114,24 +29,7 @@ type statusResponse struct {
 // message. Statuses are process-local: an id answers 404 when it was never
 // enqueued in this process, was evicted from the bounded registry, or the
 // gateway restarted since the message was sent.
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	scope, ok := s.requireLegacyToken(w, r)
-	if !ok {
-		return
-	}
-
-	id := message.DeliveryID(r.PathValue("id"))
-	entry, ok := s.statuses.lookup(id)
-	if !ok || !scope.allows(entry.account) {
-		writeError(w, http.StatusNotFound, "unknown delivery id")
-		return
-	}
-
-	writeStatusResponse(w, id, entry)
-}
-
-// writeStatusResponse writes one delivery status. Both the legacy status
-// route and the account-scoped status route use it.
+// writeStatusResponse writes one account-scoped delivery status.
 func writeStatusResponse(w http.ResponseWriter, id message.DeliveryID, entry statusEntry) {
 	response := statusResponse{ID: string(id), Status: entry.state}
 	switch entry.state {
@@ -160,22 +58,4 @@ func ensureSingleJSON(decoder *json.Decoder) error {
 		return errors.New("body must contain a single JSON object")
 	}
 	return nil
-}
-
-// messageFromRequest normalizes a transport-level send request into a
-// message. Both HTTP and WebSocket use it so validation cannot drift.
-func messageFromRequest(
-	account Account,
-	target targetRequest,
-	text string,
-) message.Message {
-	return message.Message{
-		Platform: account.Platform,
-		Sender:   account.Name,
-		Target: message.Target{
-			Kind: message.TargetKind(strings.ToLower(strings.TrimSpace(target.Kind))),
-			ID:   strings.TrimSpace(target.ID),
-		},
-		Text: text,
-	}
 }

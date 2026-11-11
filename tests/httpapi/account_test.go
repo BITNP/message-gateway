@@ -343,32 +343,28 @@ func newStatusAccountAPI(t *testing.T) *httpapi.Server {
 	})
 }
 
-func postLegacyMessage(t *testing.T, handler http.Handler, platform, token string) string {
+func postAccountMessage(t *testing.T, handler http.Handler, platform, token string) string {
 	t.Helper()
-
-	body := fmt.Sprintf(
-		`{"platform":%q,"target":{"kind":"user","id":"10001"},"text":"hello"}`,
-		platform,
-	)
-	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/messages", body, "Bearer "+token)
+	recorder := doRequest(t, handler, http.MethodPost, "/api/v1/accounts/"+platform+"/send_private_msg_async?user_id=10001&message=hello", "", "Bearer "+token)
 	if recorder.Code != http.StatusAccepted {
-		t.Fatalf("legacy send status = %d, want 202: %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("send status = %d: %s", recorder.Code, recorder.Body.String())
 	}
-
 	var response struct {
-		ID string `json:"id"`
+		Data struct {
+			ID string `json:"delivery_id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode legacy send response: %v", err)
+		t.Fatal(err)
 	}
-	return response.ID
+	return response.Data.ID
 }
 
 func TestAccountStatusScoping(t *testing.T) {
 	api := newStatusAccountAPI(t)
 
-	qqID := postLegacyMessage(t, api, "qq", "qq-token")
-	backupID := postLegacyMessage(t, api, "qq-backup", "backup-token")
+	qqID := postAccountMessage(t, api, "qq", "qq-token")
+	backupID := postAccountMessage(t, api, "qq-backup", "backup-token")
 
 	tests := []struct {
 		name          string
@@ -438,7 +434,7 @@ func TestAccountStatusScoping(t *testing.T) {
 
 func TestAccountStatusRejectsNonGET(t *testing.T) {
 	api := newStatusAccountAPI(t)
-	id := postLegacyMessage(t, api, "qq", "qq-token")
+	id := postAccountMessage(t, api, "qq", "qq-token")
 
 	recorder := doRequest(
 		t,
@@ -455,7 +451,7 @@ func TestAccountStatusRejectsNonGET(t *testing.T) {
 
 func TestAccountStatusQueryToken(t *testing.T) {
 	api := newStatusAccountAPI(t)
-	id := postLegacyMessage(t, api, "qq", "qq-token")
+	id := postAccountMessage(t, api, "qq", "qq-token")
 
 	recorder := doRequest(
 		t,
@@ -467,22 +463,5 @@ func TestAccountStatusQueryToken(t *testing.T) {
 	)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestLegacyStatusStillWorks(t *testing.T) {
-	api := newStatusAccountAPI(t)
-	id := postLegacyMessage(t, api, "qq", "qq-token")
-
-	recorder := doRequest(
-		t,
-		api,
-		http.MethodGet,
-		"/api/v1/messages/"+strings.TrimSpace(id),
-		"",
-		"Bearer qq-token",
-	)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("legacy status = %d, want 200: %s", recorder.Code, recorder.Body.String())
 	}
 }

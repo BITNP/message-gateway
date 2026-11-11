@@ -56,9 +56,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.HTTPAddr != ":8081" {
 		t.Errorf("HTTPAddr = %q, want :8081", cfg.HTTPAddr)
 	}
-	if cfg.WebSocketMaxConnections != 16 {
-		t.Errorf("WebSocketMaxConnections = %d, want 16", cfg.WebSocketMaxConnections)
-	}
 	if cfg.StatusCapacity != 4096 {
 		t.Errorf("StatusCapacity = %d, want 4096", cfg.StatusCapacity)
 	}
@@ -151,7 +148,6 @@ func TestLoadCustom(t *testing.T) {
 
 	values := validEnv(t, contents)
 	values["HTTP_ADDR"] = " 127.0.0.1:9090 "
-	values["MESSAGE_WS_MAX_CONNECTIONS"] = "4"
 	values["MESSAGE_STATUS_CAPACITY"] = "64"
 	values["MESSAGE_QUEUE_SIZE"] = "5"
 	values["MESSAGE_SEND_TIMEOUT"] = "4s"
@@ -169,9 +165,6 @@ func TestLoadCustom(t *testing.T) {
 
 	if cfg.HTTPAddr != "127.0.0.1:9090" {
 		t.Errorf("HTTPAddr = %q", cfg.HTTPAddr)
-	}
-	if cfg.WebSocketMaxConnections != 4 {
-		t.Errorf("WebSocketMaxConnections = %d, want 4", cfg.WebSocketMaxConnections)
 	}
 	if cfg.StatusCapacity != 64 {
 		t.Errorf("StatusCapacity = %d, want 64", cfg.StatusCapacity)
@@ -473,7 +466,6 @@ func TestLoadInvalidValues(t *testing.T) {
 	}{
 		{"queue size", "MESSAGE_QUEUE_SIZE", "0"},
 		{"queue size not a number", "MESSAGE_QUEUE_SIZE", "many"},
-		{"websocket connections", "MESSAGE_WS_MAX_CONNECTIONS", "0"},
 		{"status capacity", "MESSAGE_STATUS_CAPACITY", "0"},
 		{"status capacity not a number", "MESSAGE_STATUS_CAPACITY", "many"},
 		{"send timeout", "MESSAGE_SEND_TIMEOUT", "0s"},

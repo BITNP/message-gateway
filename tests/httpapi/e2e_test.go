@@ -87,48 +87,7 @@ func newEndToEndGateway(t *testing.T) (*fakenapcat.Server, *httptest.Server) {
 	})
 	gateway := httptest.NewServer(api)
 	t.Cleanup(gateway.Close)
-	t.Cleanup(api.CloseWebSockets)
 	return fake, gateway
-}
-
-func TestGatewaySendReachesNapCat(t *testing.T) {
-	fake, gateway := newEndToEndGateway(t)
-
-	body := `{"platform":"qq","target":{"kind":"user","id":"10001"},"text":"hello from gateway"}`
-	request, err := http.NewRequest(http.MethodPost, gateway.URL+"/api/v1/messages", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("http.NewRequest() error = %v", err)
-	}
-	request.Header.Set("Authorization", bearerToken())
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("send request: %v", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusAccepted)
-	}
-
-	select {
-	case call := <-fake.Sent():
-		if call.Kind != "private" {
-			t.Errorf("kind = %q, want private", call.Kind)
-		}
-		if call.UserID != 10001 {
-			t.Errorf("user id = %d, want 10001", call.UserID)
-		}
-		if call.GroupID != 0 {
-			t.Errorf("group id = %d, want 0", call.GroupID)
-		}
-		if call.Text != "hello from gateway" {
-			t.Errorf("message = %q, want hello from gateway", call.Text)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for NapCat send")
-	}
 }
 
 func TestOneBotSendReachesNapCat(t *testing.T) {
@@ -151,49 +110,6 @@ func TestOneBotSendReachesNapCat(t *testing.T) {
 	case call := <-fake.Sent():
 		if call.Kind != "private" || call.UserID != 10001 || call.Text != "hello from OneBot" {
 			t.Fatalf("unexpected send: %+v", call)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for NapCat send")
-	}
-}
-
-func TestGatewayWebSocketSendReachesNapCat(t *testing.T) {
-	fake, gateway := newEndToEndGateway(t)
-
-	conn := dialWebSocket(t, gateway, testAccountToken)
-	_ = readFrame(t, conn) // ready
-
-	writeFrame(t, conn, sendFramePayload("r-1", "hello over websocket"))
-
-	queued := decodeFrame[queuedFrame](t, readFrame(t, conn))
-	if queued.Type != "queued" {
-		t.Fatalf("first frame = %q, want queued", queued.Type)
-	}
-
-	sent := decodeFrame[sentFrame](t, readFrame(t, conn))
-	if sent.Type != "sent" {
-		t.Fatalf("second frame = %q, want sent", sent.Type)
-	}
-	if sent.ID != queued.ID {
-		t.Errorf("sent id = %q, want %q", sent.ID, queued.ID)
-	}
-	if sent.MessageID != "123" {
-		t.Errorf("message id = %q, want 123", sent.MessageID)
-	}
-	if sent.SentAt == "" {
-		t.Error("sent_at is empty")
-	}
-
-	select {
-	case call := <-fake.Sent():
-		if call.Kind != "private" {
-			t.Errorf("kind = %q, want private", call.Kind)
-		}
-		if call.UserID != 10001 {
-			t.Errorf("user id = %d, want 10001", call.UserID)
-		}
-		if call.Text != "hello over websocket" {
-			t.Errorf("message = %q, want hello over websocket", call.Text)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for NapCat send")

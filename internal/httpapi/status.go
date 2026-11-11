@@ -7,8 +7,7 @@ import (
 	"message-gateway/internal/message"
 )
 
-// Delivery states reported by the status query API. They match the WebSocket
-// frame types, plus "queued" for accepted messages that have no update yet.
+// Delivery states reported by the status query API.
 const (
 	statusQueued   = "queued"
 	statusRetrying = "retrying"

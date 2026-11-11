@@ -119,19 +119,17 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 	})
 	gateway := httptest.NewServer(api)
 	t.Cleanup(gateway.Close)
-	t.Cleanup(api.CloseWebSockets)
 
 	send := func(accountName, text string) {
 		t.Helper()
 
 		body := fmt.Sprintf(
-			`{"platform":%q,"target":{"kind":"user","id":"10001"},"text":%q}`,
-			accountName,
+			`{"user_id":"10001","message":%q}`,
 			text,
 		)
 		request, err := http.NewRequest(
 			http.MethodPost,
-			gateway.URL+"/api/v1/messages",
+			gateway.URL+"/api/v1/accounts/"+accountName+"/send_private_msg_async",
 			strings.NewReader(body),
 		)
 		if err != nil {
