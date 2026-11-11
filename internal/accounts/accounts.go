@@ -4,8 +4,10 @@ package accounts
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 
@@ -14,12 +16,15 @@ import (
 	"message-gateway/internal/napcat"
 )
 
-// Account is one configured outbound endpoint.
+// Account is one configured outbound endpoint. TokenHash is the SHA-256 hash
+// of the account's access token; the raw token stays inside the driver.
 type Account struct {
-	Name     string
-	Driver   string
-	Platform message.Platform
-	Sender   message.Sender
+	Name      string
+	Driver    string
+	Platform  message.Platform
+	Sender    message.Sender
+	TokenHash [sha256.Size]byte
+	Proxy     http.Handler
 }
 
 // Registry holds the configured accounts in name order.
@@ -68,6 +73,7 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 			BaseURL:          cfg.Address,
 			AccessToken:      cfg.AccessToken,
 			Timeout:          cfg.Timeout,
+			ProxyTimeout:     cfg.ProxyTimeout,
 			DirectoryRefresh: cfg.DirectoryRefresh,
 			DirectoryRetry:   cfg.DirectoryRetry,
 			DirectoryTimeout: cfg.DirectoryTimeout,
@@ -77,11 +83,18 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 			return Account{}, nil, err
 		}
 
+		var tokenHash [sha256.Size]byte
+		if cfg.AccessToken != "" {
+			tokenHash = sha256.Sum256([]byte(cfg.AccessToken))
+		}
+
 		return Account{
-			Name:     cfg.Name,
-			Driver:   cfg.Driver,
-			Platform: message.PlatformQQ,
-			Sender:   client,
+			Name:      cfg.Name,
+			Driver:    cfg.Driver,
+			Platform:  message.PlatformQQ,
+			Sender:    client,
+			TokenHash: tokenHash,
+			Proxy:     client,
 		}, client, nil
 	default:
 		return Account{}, nil, fmt.Errorf("unsupported driver %q", cfg.Driver)

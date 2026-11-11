@@ -23,6 +23,8 @@ const (
 type DeliveryUpdate struct {
 	// ID is the delivery id returned by EnqueueObserved.
 	ID DeliveryID
+	// Account is the sender key that owns the delivery.
+	Account string
 	// State is DeliveryRetrying, DeliverySent, or DeliveryFailed.
 	State DeliveryState
 	// Attempts is the number of send attempts that completed for this update.
@@ -50,5 +52,8 @@ func notifyDelivery(item *delivery, update DeliveryUpdate) {
 		return
 	}
 	update.ID = item.id
+	if update.Account == "" {
+		update.Account = item.msg.Sender
+	}
 	item.observe(update)
 }

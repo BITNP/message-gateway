@@ -34,11 +34,12 @@ const (
 	defaultGapJitter  = time.Second
 	defaultGapMin     = time.Second
 
-	defaultAccountTimeout   = 10 * time.Second
-	defaultDirectoryRefresh = 30 * time.Minute
-	defaultDirectoryRetry   = 5 * time.Second
-	defaultDirectoryTimeout = 60 * time.Second
-	defaultGroupTempSession = true
+	defaultAccountTimeout      = 10 * time.Second
+	defaultAccountProxyTimeout = 30 * time.Second
+	defaultDirectoryRefresh    = 30 * time.Minute
+	defaultDirectoryRetry      = 5 * time.Second
+	defaultDirectoryTimeout    = 60 * time.Second
+	defaultGroupTempSession    = true
 )
 
 var accountNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -51,6 +52,7 @@ type Account struct {
 	Address          string
 	AccessToken      string
 	Timeout          time.Duration
+	ProxyTimeout     time.Duration
 	DirectoryRefresh time.Duration
 	DirectoryRetry   time.Duration
 	DirectoryTimeout time.Duration
@@ -60,7 +62,6 @@ type Account struct {
 // Config is the validated runtime configuration for the gateway.
 type Config struct {
 	HTTPAddr                string
-	APIKey                  string
 	WebSocketMaxConnections int
 	StatusCapacity          int
 	Accounts                []Account
@@ -72,11 +73,6 @@ type Config struct {
 // required because account definitions live in the JSON file, not in the
 // environment.
 func Load(getenv func(string) string) (Config, error) {
-	apiKey := strings.TrimSpace(getenv("MESSAGE_GATEWAY_API_KEY"))
-	if apiKey == "" {
-		return Config{}, errors.New("MESSAGE_GATEWAY_API_KEY is required")
-	}
-
 	httpAddr := strings.TrimSpace(getenv("HTTP_ADDR"))
 	if httpAddr == "" {
 		httpAddr = defaultHTTPAddr
@@ -166,7 +162,6 @@ func Load(getenv func(string) string) (Config, error) {
 
 	return Config{
 		HTTPAddr:                httpAddr,
-		APIKey:                  apiKey,
 		WebSocketMaxConnections: webSocketMaxConnections,
 		StatusCapacity:          statusCapacity,
 		Accounts:                accounts,
@@ -191,6 +186,7 @@ type fileAccount struct {
 	Address          string `json:"address"`
 	AccessToken      string `json:"access_token"`
 	Timeout          string `json:"timeout"`
+	ProxyTimeout     string `json:"proxy_timeout"`
 	DirectoryRefresh string `json:"directory_refresh"`
 	DirectoryRetry   string `json:"directory_retry"`
 	DirectoryTimeout string `json:"directory_timeout"`
@@ -262,6 +258,15 @@ func buildAccount(fa fileAccount) (Account, error) {
 		return Account{}, err
 	}
 
+	proxyTimeout, err := parsePositiveDurationField(
+		"proxy_timeout",
+		fa.ProxyTimeout,
+		defaultAccountProxyTimeout,
+	)
+	if err != nil {
+		return Account{}, err
+	}
+
 	directoryRefresh, err := parsePositiveDurationField(
 		"directory_refresh",
 		fa.DirectoryRefresh,
@@ -305,6 +310,7 @@ func buildAccount(fa fileAccount) (Account, error) {
 		Address:          address,
 		AccessToken:      accessToken,
 		Timeout:          timeout,
+		ProxyTimeout:     proxyTimeout,
 		DirectoryRefresh: directoryRefresh,
 		DirectoryRetry:   directoryRetry,
 		DirectoryTimeout: directoryTimeout,

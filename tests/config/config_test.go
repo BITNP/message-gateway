@@ -42,8 +42,7 @@ func validEnv(t *testing.T, contents string) map[string]string {
 	t.Helper()
 
 	return map[string]string{
-		"MESSAGE_GATEWAY_API_KEY": "test-key",
-		"MESSAGE_ACCOUNTS_FILE":   writeAccounts(t, contents),
+		"MESSAGE_ACCOUNTS_FILE": writeAccounts(t, contents),
 	}
 }
 
@@ -55,9 +54,6 @@ func TestLoadDefaults(t *testing.T) {
 
 	if cfg.HTTPAddr != ":8081" {
 		t.Errorf("HTTPAddr = %q, want :8081", cfg.HTTPAddr)
-	}
-	if cfg.APIKey != "test-key" {
-		t.Errorf("APIKey = %q, want test-key", cfg.APIKey)
 	}
 	if cfg.WebSocketMaxConnections != 16 {
 		t.Errorf("WebSocketMaxConnections = %d, want 16", cfg.WebSocketMaxConnections)
@@ -84,6 +80,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if account.Timeout != 10*time.Second {
 		t.Errorf("Timeout = %v, want 10s", account.Timeout)
+	}
+	if account.ProxyTimeout != 30*time.Second {
+		t.Errorf("ProxyTimeout = %v, want 30s", account.ProxyTimeout)
 	}
 	if account.DirectoryRefresh != 30*time.Minute {
 		t.Errorf("DirectoryRefresh = %v, want 30m", account.DirectoryRefresh)
@@ -129,6 +128,7 @@ func TestLoadCustom(t *testing.T) {
       "address": "http://napcat:3001/",
       "access_token": " secret-token ",
       "timeout": "2s",
+      "proxy_timeout": "15s",
       "directory_refresh": "10m",
       "directory_retry": "1s",
       "directory_timeout": "20s",
@@ -145,7 +145,6 @@ func TestLoadCustom(t *testing.T) {
 
 	values := validEnv(t, contents)
 	values["HTTP_ADDR"] = " 127.0.0.1:9090 "
-	values["MESSAGE_GATEWAY_API_KEY"] = " secret "
 	values["MESSAGE_WS_MAX_CONNECTIONS"] = "4"
 	values["MESSAGE_STATUS_CAPACITY"] = "64"
 	values["MESSAGE_QUEUE_SIZE"] = "5"
@@ -164,9 +163,6 @@ func TestLoadCustom(t *testing.T) {
 
 	if cfg.HTTPAddr != "127.0.0.1:9090" {
 		t.Errorf("HTTPAddr = %q", cfg.HTTPAddr)
-	}
-	if cfg.APIKey != "secret" {
-		t.Errorf("APIKey = %q, want secret", cfg.APIKey)
 	}
 	if cfg.WebSocketMaxConnections != 4 {
 		t.Errorf("WebSocketMaxConnections = %d, want 4", cfg.WebSocketMaxConnections)
@@ -190,6 +186,9 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if primary.Timeout != 2*time.Second {
 		t.Errorf("Timeout = %v, want 2s", primary.Timeout)
+	}
+	if primary.ProxyTimeout != 15*time.Second {
+		t.Errorf("ProxyTimeout = %v, want 15s", primary.ProxyTimeout)
 	}
 	if primary.DirectoryRefresh != 10*time.Minute {
 		t.Errorf("DirectoryRefresh = %v, want 10m", primary.DirectoryRefresh)
@@ -216,6 +215,9 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if backup.Timeout != 10*time.Second {
 		t.Errorf("Timeout = %v, want default 10s", backup.Timeout)
+	}
+	if backup.ProxyTimeout != 30*time.Second {
+		t.Errorf("ProxyTimeout = %v, want default 30s", backup.ProxyTimeout)
 	}
 	if !backup.GroupTempSession {
 		t.Error("GroupTempSession = false, want default true")
@@ -259,20 +261,8 @@ func TestLoadLengthGap(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresAPIKey(t *testing.T) {
-	values := validEnv(t, defaultAccounts)
-	delete(values, "MESSAGE_GATEWAY_API_KEY")
-
-	_, err := config.Load(envMap(values))
-	if err == nil {
-		t.Fatal("Load() error = nil, want missing API key error")
-	}
-}
-
 func TestLoadRequiresAccountsFile(t *testing.T) {
-	_, err := config.Load(envMap(map[string]string{
-		"MESSAGE_GATEWAY_API_KEY": "test-key",
-	}))
+	_, err := config.Load(envMap(map[string]string{}))
 	if err == nil {
 		t.Fatal("Load() error = nil, want missing accounts file error")
 	}
@@ -384,6 +374,22 @@ func TestLoadRejectsInvalidAccountsFile(t *testing.T) {
 			contents: `{
   "accounts": [
     {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "timeout": "0s"}
+  ]
+}`,
+		},
+		{
+			name: "bad proxy timeout",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "proxy_timeout": "soon"}
+  ]
+}`,
+		},
+		{
+			name: "zero proxy timeout",
+			contents: `{
+  "accounts": [
+    {"name": "qq", "driver": "napcat", "address": "http://napcat:3001", "proxy_timeout": "0s"}
   ]
 }`,
 		},
