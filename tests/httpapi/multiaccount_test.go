@@ -55,8 +55,6 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 
 	cfg, err := config.Load(func(key string) string {
 		switch key {
-		case "MESSAGE_GATEWAY_API_KEY":
-			return testAPIKey
 		case "MESSAGE_ACCOUNTS_FILE":
 			return path
 		default:
@@ -110,14 +108,14 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 	apiAccounts := make(map[string]httpapi.Account, registry.Len())
 	for _, account := range registry.List() {
 		apiAccounts[account.Name] = httpapi.Account{
-			Name:     account.Name,
-			Driver:   account.Driver,
-			Platform: account.Platform,
+			Name:      account.Name,
+			Driver:    account.Driver,
+			Platform:  account.Platform,
+			TokenHash: account.TokenHash,
 		}
 	}
-	api := httpapi.New(manager, httpapi.Options{
+	api := newTestServer(manager, httpapi.Options{
 		Accounts: apiAccounts,
-		APIKey:   testAPIKey,
 	})
 	gateway := httptest.NewServer(api)
 	t.Cleanup(gateway.Close)
@@ -139,7 +137,12 @@ func TestMultiAccountEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("http.NewRequest() error = %v", err)
 		}
-		request.Header.Set("Authorization", bearerToken())
+		tokens := map[string]string{"qq-a": "token-a", "qq-b": "token-b"}
+		token, ok := tokens[accountName]
+		if !ok {
+			t.Fatalf("no test token for account %q", accountName)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
 		request.Header.Set("Content-Type", "application/json")
 
 		response, err := http.DefaultClient.Do(request)

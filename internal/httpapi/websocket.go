@@ -134,6 +134,7 @@ type wsConn struct {
 	id      uint64
 	ws      *websocket.Conn
 	server  *Server
+	scope   tokenScope
 	inbound chan []byte
 
 	// pending maps a delivery id to the client's request id. Only writeLoop
@@ -150,6 +151,17 @@ type wsConn struct {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	scope, present, valid := s.authenticate(r)
+	if !present {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="message-gateway"`)
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !valid {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
 	if !s.hub.reserve() {
 		writeError(w, http.StatusServiceUnavailable, "too many websocket connections")
 		return
@@ -175,6 +187,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		id:         s.connSeq.Add(1),
 		ws:         conn,
 		server:     s,
+		scope:      scope,
 		inbound:    make(chan []byte, wsInboundBuffer),
 		pending:    make(map[message.DeliveryID]string),
 		deliveries: newDeliveryInbox(),
@@ -207,6 +220,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	readyAccounts := make([]wsReadyAccount, 0, len(s.accountList))
 	for _, account := range s.accountList {
+		if !scope.allows(account.Name) {
+			continue
+		}
 		readyAccounts = append(readyAccounts, wsReadyAccount{
 			Name:   account.Name,
 			Driver: account.Driver,
@@ -330,6 +346,10 @@ func (c *wsConn) handleSend(request wsSendRequest) {
 		c.sendError(request.RequestID, "bad_request", err.Error(), 0)
 		return
 	}
+	if !c.scope.allows(account.Name) {
+		c.sendError(request.RequestID, "forbidden", "forbidden", 0)
+		return
+	}
 
 	msg := messageFromRequest(account, request.Target, request.Text)
 	if err := msg.Validate(); err != nil {
@@ -358,7 +378,7 @@ func (c *wsConn) handleSend(request wsSendRequest) {
 	// later frame for the same delivery. The status is registered before the
 	// frame too, so the client can query the id as soon as it sees it.
 	c.pending[id] = request.RequestID
-	c.server.statuses.register(id)
+	c.server.statuses.register(id, account.Name)
 	if err := c.writeJSON(wsQueuedFrame{
 		Type:      "queued",
 		RequestID: request.RequestID,

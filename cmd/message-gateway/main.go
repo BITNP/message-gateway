@@ -49,7 +49,6 @@ func main() {
 
 	api := httpapi.New(manager, httpapi.Options{
 		Accounts:       httpapiAccounts(registry),
-		APIKey:         cfg.APIKey,
 		MaxConnections: cfg.WebSocketMaxConnections,
 		StatusCapacity: cfg.StatusCapacity,
 	})
@@ -57,8 +56,6 @@ func main() {
 	server := &http.Server{
 		Handler:           api,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -129,9 +126,11 @@ func httpapiAccounts(registry *accounts.Registry) map[string]httpapi.Account {
 	out := make(map[string]httpapi.Account, registry.Len())
 	for _, account := range registry.List() {
 		out[account.Name] = httpapi.Account{
-			Name:     account.Name,
-			Driver:   account.Driver,
-			Platform: account.Platform,
+			Name:      account.Name,
+			Driver:    account.Driver,
+			Platform:  account.Platform,
+			TokenHash: account.TokenHash,
+			Proxy:     account.Proxy,
 		}
 	}
 	return out

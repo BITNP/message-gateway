@@ -121,6 +121,51 @@ func sendFramePayload(requestID, text string) string {
 	)
 }
 
+func TestWebSocketSendIsScopedToToken(t *testing.T) {
+	enqueuer := &fakeEnqueuer{}
+	srv, _ := newWebSocketServerWith(t, enqueuer, httpapi.Options{
+		Accounts: map[string]httpapi.Account{
+			"qq": {
+				Name:      "qq",
+				Driver:    "napcat",
+				Platform:  message.PlatformQQ,
+				TokenHash: testTokenHash("qq-token"),
+			},
+			"qq-backup": {
+				Name:      "qq-backup",
+				Driver:    "napcat",
+				Platform:  message.PlatformQQ,
+				TokenHash: testTokenHash("backup-token"),
+			},
+		},
+	})
+
+	conn := dialWebSocket(t, srv, "qq-token")
+	ready := decodeFrame[readyFrame](t, readFrame(t, conn))
+	if len(ready.Accounts) != 1 || ready.Accounts[0].Name != "qq" {
+		t.Fatalf("ready accounts = %+v, want only qq", ready.Accounts)
+	}
+
+	writeFrame(t, conn, `{"type":"send","request_id":"r1","platform":"qq-backup",`+
+		`"target":{"kind":"user","id":"10001"},"text":"no"}`)
+	rejected := decodeFrame[errorFrame](t, readFrame(t, conn))
+	if rejected.Code != "forbidden" {
+		t.Fatalf("error code = %q, want forbidden", rejected.Code)
+	}
+	if enqueuer.callCount() != 0 {
+		t.Fatal("enqueuer was called for a forbidden account")
+	}
+
+	writeFrame(t, conn, sendFramePayload("r2", "ok"))
+	queued := decodeFrame[queuedFrame](t, readFrame(t, conn))
+	if queued.Type != "queued" {
+		t.Fatalf("frame = %q, want queued", queued.Type)
+	}
+	if enqueuer.callCount() != 1 {
+		t.Fatalf("enqueuer calls = %d, want 1", enqueuer.callCount())
+	}
+}
+
 func TestWebSocketQueuedBeforeSent(t *testing.T) {
 	sendDone := make(chan struct{})
 	var once sync.Once
@@ -132,7 +177,7 @@ func TestWebSocketQueuedBeforeSent(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "hello"))
@@ -194,7 +239,7 @@ func TestWebSocketAcknowledgesBeforeSending(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "hello"))
@@ -233,7 +278,7 @@ func TestWebSocketReportsRetryThenSent(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "retry me"))
@@ -276,7 +321,7 @@ func TestWebSocketReportsPermanentFailure(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "hello"))
@@ -311,7 +356,7 @@ func TestWebSocketReportsExhaustedRetries(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "never"))
@@ -346,7 +391,7 @@ func TestWebSocketSendMapsMessage(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, `{"type":"send","request_id":"r-1","platform":" qq-main ",`+
@@ -401,7 +446,7 @@ func TestWebSocketSendRejectsInvalidMessages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			enqueuer := &fakeEnqueuer{}
 			srv, _ := newWebSocketServerWith(t, enqueuer, httpapi.Options{})
-			conn := dialWebSocket(t, srv, testAPIKey)
+			conn := dialWebSocket(t, srv, testAccountToken)
 			_ = readFrame(t, conn) // ready
 
 			writeFrame(t, conn, tt.payload)
@@ -452,7 +497,7 @@ func TestWebSocketSendMapsEnqueueErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			enqueuer := &fakeEnqueuer{err: tt.err}
 			srv, _ := newWebSocketServerWith(t, enqueuer, httpapi.Options{})
-			conn := dialWebSocket(t, srv, testAPIKey)
+			conn := dialWebSocket(t, srv, testAccountToken)
 			_ = readFrame(t, conn) // ready
 
 			writeFrame(t, conn, sendFramePayload("r-1", "hello"))
@@ -483,7 +528,7 @@ func TestWebSocketPipelinesRequests(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	const count = 3
@@ -537,10 +582,10 @@ func TestWebSocketDeliveriesAreScopedToTheConnection(t *testing.T) {
 		},
 	})
 
-	first := dialWebSocket(t, srv, testAPIKey)
+	first := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, first) // ready
 
-	second := dialWebSocket(t, srv, testAPIKey)
+	second := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, second) // ready
 
 	writeFrame(t, first, sendFramePayload("r-1", "hello"))

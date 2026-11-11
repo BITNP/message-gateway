@@ -59,11 +59,7 @@ func newWebSocketServerWith(
 			},
 		}
 	}
-	if opts.APIKey == "" {
-		opts.APIKey = testAPIKey
-	}
-
-	api := httpapi.New(enqueuer, opts)
+	api := newTestServer(enqueuer, opts)
 	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
 	t.Cleanup(api.CloseWebSockets)
@@ -145,9 +141,10 @@ func TestWebSocketRequiresAuth(t *testing.T) {
 	tests := []struct {
 		name  string
 		token string
+		want  int
 	}{
-		{name: "missing", token: ""},
-		{name: "wrong", token: "wrong"},
+		{name: "missing", token: "", want: http.StatusUnauthorized},
+		{name: "wrong", token: "wrong", want: http.StatusForbidden},
 	}
 
 	for _, tt := range tests {
@@ -160,8 +157,8 @@ func TestWebSocketRequiresAuth(t *testing.T) {
 			if resp == nil {
 				t.Fatalf("Dial() response = nil, want HTTP response: %v", err)
 			}
-			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
 			}
 		})
 	}
@@ -186,7 +183,7 @@ func TestWebSocketReadyFrame(t *testing.T) {
 			},
 		},
 	})
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 
 	ready := decodeFrame[readyFrame](t, readFrame(t, conn))
 	if ready.Type != "ready" {
@@ -205,7 +202,7 @@ func TestWebSocketReadyFrame(t *testing.T) {
 
 func TestWebSocketRejectsUnknownFrames(t *testing.T) {
 	srv, _ := newWebSocketServer(t, httpapi.Options{})
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, `{"type":"nope","request_id":"r-1"}`)
@@ -236,7 +233,7 @@ func TestWebSocketRejectsUnknownFrames(t *testing.T) {
 
 func TestWebSocketRejectsBinaryFrames(t *testing.T) {
 	srv, _ := newWebSocketServer(t, httpapi.Options{})
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -256,10 +253,10 @@ func TestWebSocketRejectsBinaryFrames(t *testing.T) {
 func TestWebSocketMaxConnections(t *testing.T) {
 	srv, _ := newWebSocketServer(t, httpapi.Options{MaxConnections: 1})
 
-	first := dialWebSocket(t, srv, testAPIKey)
+	first := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, first) // ready
 
-	conn, resp, err := dialWebSocketResponse(srv, testAPIKey)
+	conn, resp, err := dialWebSocketResponse(srv, testAccountToken)
 	if err == nil {
 		_ = conn.CloseNow()
 		t.Fatal("second Dial() error = nil, want rejection")
@@ -277,7 +274,7 @@ func TestWebSocketMaxConnections(t *testing.T) {
 }
 
 func TestWebSocketKeepaliveSurvivesServerTimeouts(t *testing.T) {
-	api := httpapi.New(&fakeEnqueuer{}, httpapi.Options{
+	api := newTestServer(&fakeEnqueuer{}, httpapi.Options{
 		Accounts: map[string]httpapi.Account{
 			"qq": {
 				Name:     "qq",
@@ -285,7 +282,6 @@ func TestWebSocketKeepaliveSurvivesServerTimeouts(t *testing.T) {
 				Platform: message.PlatformQQ,
 			},
 		},
-		APIKey:       testAPIKey,
 		PingInterval: 20 * time.Millisecond,
 	})
 	srv := httptest.NewUnstartedServer(api)
@@ -295,7 +291,7 @@ func TestWebSocketKeepaliveSurvivesServerTimeouts(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(api.CloseWebSockets)
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	// The reader also answers server pings; a stalled reader would make the
@@ -332,7 +328,7 @@ func TestWebSocketKeepaliveSurvivesServerTimeouts(t *testing.T) {
 
 func TestWebSocketCloseWebSockets(t *testing.T) {
 	srv, api := newWebSocketServer(t, httpapi.Options{})
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	readErr := make(chan error, 1)

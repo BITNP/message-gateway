@@ -27,7 +27,7 @@ func TestWebSocketCloseDoesNotCancelQueuedMessages(t *testing.T) {
 		},
 	})
 
-	conn := dialWebSocket(t, srv, testAPIKey)
+	conn := dialWebSocket(t, srv, testAccountToken)
 	_ = readFrame(t, conn) // ready
 
 	writeFrame(t, conn, sendFramePayload("r-1", "one"))
@@ -87,7 +87,7 @@ func TestWebSocketConnectionChurnDoesNotLeakGoroutines(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	for i := 0; i < 20; i++ {
-		conn := dialWebSocket(t, srv, testAPIKey)
+		conn := dialWebSocket(t, srv, testAccountToken)
 		_ = readFrame(t, conn) // ready
 		if err := conn.CloseNow(); err != nil {
 			t.Fatalf("connection %d CloseNow() error = %v", i, err)
