@@ -490,3 +490,50 @@ func TestLoadInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestEventAddressValidation(t *testing.T) {
+	for _, tt := range []struct {
+		address string
+		valid   bool
+	}{
+		{"ws://napcat:3002/event", true}, {"wss://napcat.example/event", true},
+		{"http://napcat/event", false}, {"ws://user:password@napcat/event", false},
+		{"ws://napcat/event?token=secret", false}, {"ws://napcat/event#fragment", false},
+	} {
+		t.Run(tt.address, func(t *testing.T) {
+			contents := strings.Replace(defaultAccounts, `"address": "http://napcat:3001",`, `"address": "http://napcat:3001", "event_address": "`+tt.address+`",`, 1)
+			cfg, err := config.Load(envMap(validEnv(t, contents)))
+			if tt.valid && (err != nil || cfg.Accounts[0].EventAddress != tt.address) {
+				t.Fatalf("valid event address: %v", err)
+			}
+			if !tt.valid && err == nil {
+				t.Fatal("invalid event address accepted")
+			}
+		})
+	}
+}
+
+func TestEventLimits(t *testing.T) {
+	for _, tt := range []struct {
+		fields string
+		valid  bool
+	}{
+		{`"event_reconnect_min":"2s", "event_reconnect_max":"4s", "event_buffer_size":8, "event_max_bytes":2048,`, true},
+		{`"event_reconnect_min":"5s", "event_reconnect_max":"4s",`, false},
+		{`"event_reconnect_min":"-1s",`, false},
+		{`"event_buffer_size":-1,`, false},
+		{`"event_max_bytes":-1,`, false},
+	} {
+		contents := strings.Replace(defaultAccounts, `"address": "http://napcat:3001",`, `"address": "http://napcat:3001", `+tt.fields, 1)
+		cfg, err := config.Load(envMap(validEnv(t, contents)))
+		if tt.valid && err != nil {
+			t.Fatalf("valid limits: %v", err)
+		}
+		if !tt.valid && err == nil {
+			t.Fatalf("accepted %s", tt.fields)
+		}
+		if tt.valid && (cfg.Accounts[0].EventReconnectMin != 2*time.Second || cfg.Accounts[0].EventReconnectMax != 4*time.Second || cfg.Accounts[0].EventBufferSize != 8 || cfg.Accounts[0].EventMaxBytes != 2048) {
+			t.Fatalf("limits not preserved: %+v", cfg.Accounts[0])
+		}
+	}
+}

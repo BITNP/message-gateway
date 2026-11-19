@@ -26,6 +26,7 @@ type Account struct {
 	Sender    message.Sender
 	TokenHash [sha256.Size]byte
 	Proxy     http.Handler
+	Events    *napcat.Events
 }
 
 // Registry holds the configured accounts in name order.
@@ -52,6 +53,9 @@ func Build(cfgs []config.Account) (*Registry, error) {
 			return nil, fmt.Errorf("account %q: %w", cfg.Name, err)
 		}
 
+		if account.Events != nil {
+			registry.runners = append(registry.runners, account.Events)
+		}
 		registry.byName[account.Name] = account
 		registry.order = append(registry.order, account.Name)
 		if run != nil {
@@ -90,6 +94,11 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 			return Account{}, nil, err
 		}
 
+		events, err := napcat.NewEvents(cfg.EventAddress, cfg.AccessToken, client, napcat.EventConfig{ReconnectMin: cfg.EventReconnectMin, ReconnectMax: cfg.EventReconnectMax, BufferSize: cfg.EventBufferSize, MaxBytes: cfg.EventMaxBytes})
+		if err != nil {
+			return Account{}, nil, err
+		}
+
 		var tokenHash [sha256.Size]byte
 		if cfg.ClientToken != "" {
 			tokenHash = sha256.Sum256([]byte(cfg.ClientToken))
@@ -102,6 +111,7 @@ func buildAccount(cfg config.Account) (Account, runner, error) {
 			Sender:    client,
 			TokenHash: tokenHash,
 			Proxy:     client,
+			Events:    events,
 		}, client, nil
 	default:
 		return Account{}, nil, fmt.Errorf("unsupported driver %q", cfg.Driver)

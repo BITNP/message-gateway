@@ -46,17 +46,22 @@ var accountNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 // Account is one outbound endpoint the gateway can send through. The gateway
 // does not know which platform account is logged in behind Address.
 type Account struct {
-	Name             string
-	Driver           string
-	Address          string
-	AccessToken      string
-	ClientToken      string
-	Timeout          time.Duration
-	ProxyTimeout     time.Duration
-	DirectoryRefresh time.Duration
-	DirectoryRetry   time.Duration
-	DirectoryTimeout time.Duration
-	GroupTempSession bool
+	Name              string
+	Driver            string
+	Address           string
+	EventAddress      string
+	EventReconnectMin time.Duration
+	EventReconnectMax time.Duration
+	EventBufferSize   int
+	EventMaxBytes     int64
+	AccessToken       string
+	ClientToken       string
+	Timeout           time.Duration
+	ProxyTimeout      time.Duration
+	DirectoryRefresh  time.Duration
+	DirectoryRetry    time.Duration
+	DirectoryTimeout  time.Duration
+	GroupTempSession  bool
 }
 
 // Config is the validated runtime configuration for the gateway.
@@ -171,17 +176,22 @@ type fileConfig struct {
 }
 
 type fileAccount struct {
-	Name             string `json:"name"`
-	Driver           string `json:"driver"`
-	Address          string `json:"address"`
-	AccessToken      string `json:"access_token"`
-	ClientToken      string `json:"client_token"`
-	Timeout          string `json:"timeout"`
-	ProxyTimeout     string `json:"proxy_timeout"`
-	DirectoryRefresh string `json:"directory_refresh"`
-	DirectoryRetry   string `json:"directory_retry"`
-	DirectoryTimeout string `json:"directory_timeout"`
-	GroupTempSession *bool  `json:"group_temp_session"`
+	Name              string `json:"name"`
+	Driver            string `json:"driver"`
+	Address           string `json:"address"`
+	EventAddress      string `json:"event_address"`
+	EventReconnectMin string `json:"event_reconnect_min"`
+	EventReconnectMax string `json:"event_reconnect_max"`
+	EventBufferSize   int    `json:"event_buffer_size"`
+	EventMaxBytes     int64  `json:"event_max_bytes"`
+	AccessToken       string `json:"access_token"`
+	ClientToken       string `json:"client_token"`
+	Timeout           string `json:"timeout"`
+	ProxyTimeout      string `json:"proxy_timeout"`
+	DirectoryRefresh  string `json:"directory_refresh"`
+	DirectoryRetry    string `json:"directory_retry"`
+	DirectoryTimeout  string `json:"directory_timeout"`
+	GroupTempSession  *bool  `json:"group_temp_session"`
 }
 
 func loadAccounts(path string) ([]Account, error) {
@@ -244,6 +254,37 @@ func buildAccount(fa fileAccount) (Account, error) {
 		return Account{}, err
 	}
 
+	eventAddress, err := validateEventAddress(fa.EventAddress)
+	if err != nil {
+		return Account{}, err
+	}
+
+	eventReconnectMin, err := parsePositiveDurationField("event_reconnect_min", fa.EventReconnectMin, time.Second)
+	if err != nil {
+		return Account{}, err
+	}
+	eventReconnectMax, err := parsePositiveDurationField("event_reconnect_max", fa.EventReconnectMax, 30*time.Second)
+	if err != nil {
+		return Account{}, err
+	}
+	if eventReconnectMax < eventReconnectMin {
+		return Account{}, errors.New("event_reconnect_max must be at least event_reconnect_min")
+	}
+	eventBufferSize := fa.EventBufferSize
+	if eventBufferSize == 0 {
+		eventBufferSize = 128
+	}
+	if eventBufferSize < 0 {
+		return Account{}, errors.New("event_buffer_size must be positive")
+	}
+	eventMaxBytes := fa.EventMaxBytes
+	if eventMaxBytes == 0 {
+		eventMaxBytes = 16 << 20
+	}
+	if eventMaxBytes < 0 {
+		return Account{}, errors.New("event_max_bytes must be positive")
+	}
+
 	timeout, err := parsePositiveDurationField("timeout", fa.Timeout, defaultAccountTimeout)
 	if err != nil {
 		return Account{}, err
@@ -304,17 +345,22 @@ func buildAccount(fa fileAccount) (Account, error) {
 	}
 
 	return Account{
-		Name:             name,
-		Driver:           driver,
-		Address:          address,
-		AccessToken:      accessToken,
-		ClientToken:      clientToken,
-		Timeout:          timeout,
-		ProxyTimeout:     proxyTimeout,
-		DirectoryRefresh: directoryRefresh,
-		DirectoryRetry:   directoryRetry,
-		DirectoryTimeout: directoryTimeout,
-		GroupTempSession: groupTempSession,
+		Name:              name,
+		Driver:            driver,
+		Address:           address,
+		EventAddress:      eventAddress,
+		EventReconnectMin: eventReconnectMin,
+		EventReconnectMax: eventReconnectMax,
+		EventBufferSize:   eventBufferSize,
+		EventMaxBytes:     eventMaxBytes,
+		AccessToken:       accessToken,
+		ClientToken:       clientToken,
+		Timeout:           timeout,
+		ProxyTimeout:      proxyTimeout,
+		DirectoryRefresh:  directoryRefresh,
+		DirectoryRetry:    directoryRetry,
+		DirectoryTimeout:  directoryTimeout,
+		GroupTempSession:  groupTempSession,
 	}, nil
 }
 
@@ -342,6 +388,27 @@ func validateAddress(raw string) (string, error) {
 	}
 
 	return strings.TrimRight(address, "/"), nil
+}
+
+func validateEventAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	if address == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return "", fmt.Errorf("parse event_address: %w", err)
+	}
+	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+		return "", errors.New("event_address scheme must be ws or wss")
+	}
+	if parsed.Host == "" {
+		return "", errors.New("event_address host is required")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("event_address must not contain credentials, a query, or a fragment")
+	}
+	return address, nil
 }
 
 func parsePositiveDurationField(name, raw string, fallback time.Duration) (time.Duration, error) {

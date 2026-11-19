@@ -4,6 +4,7 @@
       "name": "qq",
       "driver": "napcat",
       "address": "http://napcat:3001",
+      "event_address": "ws://napcat:3001/event",
       "access_token": "replace-with-napcat-token",
       "client_token": "replace-with-client-token"
     }

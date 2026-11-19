@@ -261,3 +261,18 @@ curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
 | `HTTP_ADDR` | `:8081` | Address the HTTP API listens on. |
 | `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. `access_token` is the upstream token; `client_token` is the gateway credential. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoints. |
+
+## Upstream event configuration
+
+An account may optionally set `event_address` to a NapCat OneBot event
+WebSocket URL (`ws` or `wss`, without credentials, query, or fragment).
+The gateway uses the account's upstream `access_token` and checks event
+identity against `get_login_info`. Events are live and are not persisted.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `event_address` | disabled | NapCat event WebSocket URL. |
+| `event_reconnect_min` | `1s` | Initial reconnect delay. |
+| `event_reconnect_max` | `30s` | Maximum reconnect delay including jitter. |
+| `event_buffer_size` | `128` | Maximum queued events per subscriber. |
+| `event_max_bytes` | `16777216` | Maximum upstream event size in bytes. |
