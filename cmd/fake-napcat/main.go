@@ -20,6 +20,8 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
+	log.SetOutput(os.Stdout)
+
 	flags := flag.NewFlagSet("fake-napcat", flag.ExitOnError)
 	addr := flags.String("addr", envString("FAKE_NAPCAT_ADDR", fakenapcat.DefaultAddr), "HTTP listen address")
 	token := flags.String("token", os.Getenv("FAKE_NAPCAT_ACCESS_TOKEN"), "optional bearer token")

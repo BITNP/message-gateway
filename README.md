@@ -205,7 +205,7 @@ docker compose -f docker-compose.napcat.yml down
 
 `cmd/fake-napcat` is a dev-only OneBot 11 server. It implements the directory
 and send endpoints the gateway uses and records every send attempt. It never
-connects to QQ.
+connects to QQ. Received message text and send results are written to stdout.
 
 ### Manual run with host binaries
 
