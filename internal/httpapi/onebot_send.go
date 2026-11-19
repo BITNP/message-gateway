@@ -119,6 +119,9 @@ func (s *Server) handleOneBotSend(w http.ResponseWriter, r *http.Request, accoun
 		}
 	}
 	deliveryID, err := s.enqueuer.EnqueueObserved(r.Context(), msg, observer)
+	if admitted, ok := r.Context().Value(sendAdmissionKey{}).(func()); ok {
+		admitted()
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, message.ErrQueueFull):

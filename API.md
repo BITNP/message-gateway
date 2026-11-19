@@ -1,6 +1,6 @@
 # API Reference
 
-HTTP API for `message-gateway`. The server listens on `HTTP_ADDR`
+HTTP and WebSocket API for `message-gateway`. The server listens on `HTTP_ADDR`
 (default `:8081`) and speaks JSON.
 
 ## Authentication
@@ -116,10 +116,11 @@ process is running; it does not check NapCat connectivity or directory state.
 curl http://127.0.0.1:8081/healthz
 ```
 
-### `ANY /api/v1/accounts/{account}/{action...}`
+### `ANY /api/v1/accounts/{account}/http/{action...}`
 
 Queues message-send actions and proxies other OneBot 11 HTTP actions to the
-configured account driver, such as NapCat. For proxied actions, the driver's
+configured account driver, such as NapCat. The original
+`/api/v1/accounts/{account}/{action...}` route remains supported as an alias. For proxied actions, the driver's
 HTTP status, headers, and body are returned unchanged.
 
 **Path parameters**
@@ -262,17 +263,62 @@ curl http://127.0.0.1:8081/api/v1/accounts/qq/message-status/qq-1 \
 | `MESSAGE_ACCOUNTS_FILE` | — (required) | JSON file with the configured accounts. `access_token` is the upstream token; `client_token` is the gateway credential. |
 | `MESSAGE_STATUS_CAPACITY` | `4096` | Delivery statuses kept for the status query endpoints. |
 
-## Upstream event configuration
+## Forward WebSocket
 
-An account may optionally set `event_address` to a NapCat OneBot event
-WebSocket URL (`ws` or `wss`, without credentials, query, or fragment).
-The gateway uses the account's upstream `access_token` and checks event
-identity against `get_login_info`. Events are live and are not persisted.
+The account-scoped WebSocket endpoints use OneBot 11 JSON messages:
+
+| Endpoint | Role |
+| --- | --- |
+| `/api/v1/accounts/{account}/ws` | Actions, responses, and events |
+| `/api/v1/accounts/{account}/ws/api` | Actions and responses |
+| `/api/v1/accounts/{account}/ws/event` | Events |
+
+A trailing slash is accepted. Authenticate the handshake using the account
+`client_token`, with the same bearer header or `access_token` query parameter
+as HTTP. An upstream event connection must be configured and ready for event
+and universal sessions. API-only sessions work without it.
+
+Send a JSON action object such as `{"action":"get_login_info","params":{},
+"echo":"request-1"}`. Responses preserve `echo` when present, including its
+JSON type. Standard sends use the same account queue as HTTP. Other actions
+are sent to the account's OneBot HTTP endpoint. Responses can arrive out of
+order; clients should use distinct echo values.
+
+Configure optional `event_address` in an account as the NapCat OneBot event
+WebSocket URL (`ws` or `wss`). The gateway authenticates upstream with the
+account's private `access_token`. Events are broadcast to that account's
+event and universal sessions. They are live only: events missed during a
+disconnection or restart are not replayed. Slow subscribers are disconnected.
+Existing HTTP and API-only WebSocket clients continue operating without event
+configuration. Reverse WebSocket and HTTP event callbacks are not supported.
+
+Account event settings (optional):
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `event_address` | disabled | NapCat event WebSocket URL. |
+| `event_address` | disabled | NapCat OneBot event WebSocket URL; no credentials, query, or fragment. |
 | `event_reconnect_min` | `1s` | Initial reconnect delay. |
 | `event_reconnect_max` | `30s` | Maximum reconnect delay including jitter. |
 | `event_buffer_size` | `128` | Maximum queued events per subscriber. |
 | `event_max_bytes` | `16777216` | Maximum upstream event size in bytes. |
+
+The gateway verifies the event stream's `self_id` against `get_login_info`
+before marking it ready. NapCat must send a lifecycle event or another event
+on connection. A mismatch or a lost upstream stream closes affected event
+subscriptions. The gateway emits a connection lifecycle event for each new
+subscriber and relays upstream heartbeat events.
+
+Downstream WebSocket limits are configured through environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `WS_CONNECTIONS_PER_ACCOUNT` | `64` | Maximum concurrent connections per account. |
+| `WS_ACTIONS_PER_CONNECTION` | `32` | Maximum concurrently executing actions per connection. |
+| `WS_ACTIONS_PER_ACCOUNT` | `256` | Maximum concurrently executing actions per account. |
+| `WS_OUTBOUND_BUFFER` | `32` | Maximum outbound frames queued per connection. |
+| `WS_ACTION_MAX_BYTES` | `1048576` | Maximum inbound WebSocket message size. |
+| `WS_RESPONSE_MAX_BYTES` | `4194304` | Maximum upstream action response size. |
+| `WS_WRITE_TIMEOUT` | `10s` | Deadline for writing one frame. |
+
+The account action limit counts executing actions. Each connection also has a
+bounded input buffer, so buffered requests are not included in that count.

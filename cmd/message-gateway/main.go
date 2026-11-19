@@ -27,6 +27,11 @@ func main() {
 		log.Fatalf("configuration: %v", err)
 	}
 
+	wsLimits, err := config.LoadWebSocketLimits(os.Getenv)
+	if err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
+
 	registry, err := accounts.Build(cfg.Accounts)
 	if err != nil {
 		log.Fatalf("accounts: %v", err)
@@ -48,8 +53,9 @@ func main() {
 	}
 
 	api := httpapi.New(manager, httpapi.Options{
-		Accounts:       httpapiAccounts(registry),
-		StatusCapacity: cfg.StatusCapacity,
+		Accounts:        httpapiAccounts(registry),
+		StatusCapacity:  cfg.StatusCapacity,
+		WebSocketLimits: httpapi.WebSocketLimits{ConnectionsPerAccount: wsLimits.ConnectionsPerAccount, ActionsPerConnection: wsLimits.ActionsPerConnection, ActionsPerAccount: wsLimits.ActionsPerAccount, OutboundBuffer: wsLimits.OutboundBuffer, ActionBytes: int64(wsLimits.ActionBytes), ResponseBytes: wsLimits.ResponseBytes, WriteTimeout: wsLimits.WriteTimeout},
 	})
 
 	server := &http.Server{
@@ -102,8 +108,12 @@ func main() {
 
 	// Stop the workers first so waiting HTTP sends are released on shutdown.
 	cancel()
+	api.CloseWebSockets()
 	background.Wait()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := api.WaitWebSockets(shutdownCtx); err != nil {
+		log.Printf("websocket shutdown: %v", err)
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
 		_ = server.Close()
@@ -121,13 +131,17 @@ func main() {
 func httpapiAccounts(registry *accounts.Registry) map[string]httpapi.Account {
 	out := make(map[string]httpapi.Account, registry.Len())
 	for _, account := range registry.List() {
-		out[account.Name] = httpapi.Account{
+		entry := httpapi.Account{
 			Name:      account.Name,
 			Driver:    account.Driver,
 			Platform:  account.Platform,
 			TokenHash: account.TokenHash,
 			Proxy:     account.Proxy,
 		}
+		if account.Events != nil {
+			entry.Events = account.Events
+		}
+		out[account.Name] = entry
 	}
 	return out
 }

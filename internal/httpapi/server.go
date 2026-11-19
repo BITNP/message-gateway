@@ -26,6 +26,7 @@ type Account struct {
 	Platform  message.Platform
 	TokenHash [sha256.Size]byte
 	Proxy     http.Handler
+	Events    EventSource
 }
 
 // Options configures the gateway HTTP transport.
@@ -34,7 +35,8 @@ type Options struct {
 	Accounts map[string]Account
 	// StatusCapacity bounds how many delivery statuses are tracked for the
 	// status query API. Zero or negative uses the default of 4096.
-	StatusCapacity int
+	StatusCapacity  int
+	WebSocketLimits WebSocketLimits
 }
 
 // Server is the gateway's HTTP handler.
@@ -44,6 +46,8 @@ type Server struct {
 	accountTokens map[[sha256.Size]byte]map[string]struct{}
 	statuses      *statusRegistry
 	mux           *http.ServeMux
+	websockets    websocketRegistry
+	wsLimits      WebSocketLimits
 }
 
 // New returns the gateway handler. Client tokens are matched by SHA-256 hash.
@@ -74,6 +78,7 @@ func New(enqueuer Enqueuer, opts Options) *Server {
 		accounts:      accounts,
 		accountTokens: accountTokens,
 		statuses:      newStatusRegistry(statusCapacity),
+		wsLimits:      opts.WebSocketLimits.withDefaults(),
 	}
 
 	mux := http.NewServeMux()
@@ -94,9 +99,42 @@ func New(enqueuer Enqueuer, opts Options) *Server {
 		"/api/v1/accounts/{account}/message-status/",
 		s.handleAccountMessageStatusNotAllowed,
 	)
+	mux.HandleFunc("/api/v1/accounts/{account}/http/{action...}", s.handleAccount)
+	mux.HandleFunc("/api/v1/accounts/{account}/http", s.handleTransportPath)
+	mux.HandleFunc("/api/v1/accounts/{account}/ws", func(w http.ResponseWriter, r *http.Request) { s.handleWebSocket(w, r, "universal") })
+	mux.HandleFunc("/api/v1/accounts/{account}/ws/api", func(w http.ResponseWriter, r *http.Request) { s.handleWebSocket(w, r, "api") })
+	mux.HandleFunc("/api/v1/accounts/{account}/ws/event", func(w http.ResponseWriter, r *http.Request) { s.handleWebSocket(w, r, "event") })
+	mux.HandleFunc("/api/v1/accounts/{account}/ws/", s.handleTransportPath)
 	mux.HandleFunc("/api/v1/accounts/{account}/{action...}", s.handleAccount)
 	s.mux = mux
 	return s
+}
+
+// CloseWebSockets stops accepting WebSocket sessions and closes existing ones.
+func (s *Server) CloseWebSockets() { s.websockets.shutdown() }
+
+// WaitWebSockets waits for sessions after CloseWebSockets has stopped admission.
+func (s *Server) WaitWebSockets(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { s.websockets.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) handleTransportPath(w http.ResponseWriter, r *http.Request) {
+	account, ok := s.accounts[r.PathValue("account")]
+	if !ok {
+		writeOneBotError(w, http.StatusNotFound, 1404, "unknown account")
+		return
+	}
+	if !s.authorizeAccount(w, r, account) {
+		return
+	}
+	writeOneBotError(w, http.StatusBadRequest, 1400, "missing action")
 }
 
 // ServeHTTP serves the gateway API.

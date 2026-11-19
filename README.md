@@ -18,7 +18,7 @@ the HTTP API. It was extracted from
 - Public `GET /healthz` liveness endpoint.
 - Docker Compose stack for the gateway, plus an optional sample NapCat stack.
 - Dev-only fake NapCat for testing without a QQ account.
-- No external Go dependencies or cgo.
+- Pure Go; no cgo required.
 
 ## Account-scoped OneBot API
 
@@ -580,3 +580,15 @@ to `MESSAGE_GATEWAY_URL` with per-account tokens, then remove the frozen
 
 Hot reload, persistent queues, cancellation, replay across reconnects, inbound
 messages, and new drivers are intentionally out of scope.
+
+## WebSocket clients
+
+Configure an account's optional `event_address` with its NapCat OneBot event
+WebSocket URL, for example `ws://napcat:3001/event`. The HTTP `address`
+continues to serve actions and queued sends. Enable the corresponding NapCat
+WebSocket server separately and use the same upstream token.
+
+Clients connect to `/api/v1/accounts/{account}/ws` for actions and events,
+`/ws/api` for actions, or `/ws/event` for events. Authenticate using the
+account's gateway client token. Events are live and are not replayed after a
+disconnect. See [API.md](API.md) for the transport contract.

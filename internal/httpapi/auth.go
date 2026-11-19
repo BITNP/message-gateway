@@ -19,8 +19,14 @@ func (s tokenScope) allows(account string) bool {
 // requestToken reads a client token from the Authorization header or the
 // OneBot 11 access_token query parameter. The header wins when both exist.
 func requestToken(r *http.Request) (string, bool) {
-	if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
-		return token, true
+	if values, exists := r.Header[http.CanonicalHeaderKey("Authorization")]; exists {
+		if len(values) != 1 {
+			return "", true
+		}
+		if token, ok := bearerToken(values[0]); ok {
+			return token, true
+		}
+		return "", true
 	}
 	if token := strings.TrimSpace(r.URL.Query().Get("access_token")); token != "" {
 		return token, true
