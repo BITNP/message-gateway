@@ -430,7 +430,11 @@ is not part of the production image.
 
 ## clinic-backend integration
 
-The backend integration contract is account-scoped HTTP. In the backend `.env`:
+The backend integration contract is account-scoped HTTP. The backend stores its
+gateway URL, account, account token, timeout, and reminder template in
+database-managed runtime settings. The following backend `.env` values are
+compatibility seeds for a missing settings row and are ignored after the row
+exists:
 
 ```bash
 # Host-run backend development:
@@ -441,13 +445,16 @@ MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
 MESSAGE_GATEWAY_ACCOUNT=qq
 MESSAGE_GATEWAY_ACCOUNT_TOKEN=<the account's client_token from accounts.json>
 MESSAGE_GATEWAY_TIMEOUT=5s
+SERVICE_DATE_REMINDER_TEMPLATE=
 ```
 
 Keep `NAPCAT_BASE_URL` empty in the backend so the legacy in-process manager
 stays disabled. `clinic-backend/scripts/dev.sh` starts the gateway stack
 automatically. It does not start NapCat; run the sample stack separately if
 you need it locally, or use `clinic-backend/scripts/dev.sh --fake-napcat` for
-testing without QQ.
+testing without QQ. The account token is write-only through the backend admin
+API; operators can change it from the system settings page after the row has
+been seeded.
 
 ## Configuration
 
